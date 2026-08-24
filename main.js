@@ -117,6 +117,10 @@ app.whenReady().then(() => {
   createWindow();
   createSettingsWindow(); // 👈 [新增]
   createTray();           // 👈 [新增]
+  // 👇 [新增] 檢查啟動參數，如果有 --show-settings 就自動顯示設定視窗
+  if (process.argv.includes('--show-settings')) {
+    settingsWin.show();
+  }
 });
 
 // 修正：當真正退出時，解除 settingsWin 的攔截
