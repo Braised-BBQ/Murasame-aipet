@@ -111,10 +111,11 @@ D:\murasame_public\
 - 修改系統設定後需重啟應用程式方可生效。
 - 未實作本地部屬接口。
 
-### 版權與來源專案
-- **源專案項目**：kuxiaowo/AIpet-Murasame
 
-- **2dlive模型**：
+## ⚖️ 許可證與版權聲明 (License & Copyright)
+
+- **Live2D 模型與音訊素材**：本專案包含之 Live2D 角色模型、貼圖及語音素材版權歸原繪師與建模師所有，**不適用於 GPL v3 授權**。僅供非商業學習與交流使用，請勿將美術素材用於任何商業用途或二次散佈。
+- **原專案來源**：[kuxiaowo/AIpet-Murasame](https://github.com/kuxiaowo/AIpet-Murasame)
 
 - **代碼建置**：gemini-3.1-pro
 
