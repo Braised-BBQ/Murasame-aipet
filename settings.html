@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>桌寵設定</title>
+  <style>
+    :root {
+      --bg-color: #f5f7fa;
+      --panel-bg: #ffffff;
+      --text-color: #333;
+      --border-color: #e4e7ed;
+      --primary-color: #409eff;
+      --primary-hover: #66b1ff;
+    }
+    
+    body { 
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 20px;
+    }
+
+    h2 { margin-top: 0; font-size: 22px; border-bottom: 2px solid var(--primary-color); padding-bottom: 10px; display: inline-block;}
+
+    .section {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 15px 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: var(--primary-color);
+    }
+
+    .form-group {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .form-group label {
+      flex: 0 0 160px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .form-group input[type="text"], 
+    .form-group input[type="password"], 
+    .form-group input[type="number"] {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .form-group input:focus { border-color: var(--primary-color); }
+    
+    .form-group input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .bottom-bar {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-top: 20px;
+      padding-bottom: 20px;
+    }
+
+    button {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 15px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.2s;
+    }
+
+    button:hover { background-color: var(--primary-hover); }
+
+    #status {
+      font-weight: bold;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>桌寵系統設定</h2>
+
+  <!-- AI 核心設定 -->
+  <div class="section">
+    <div class="section-title">🤖 AI 核心設定</div>
+    <div class="form-group">
+      <label>API Key</label>
+      <input type="password" id="api_key" placeholder="輸入 OpenAI 格式 API 金鑰">
+    </div>
+    <div class="form-group">
+      <label>Base URL (API 網址)</label>
+      <input type="text" id="base_url" placeholder="例如: https://api.openai.com/v1">
+    </div>
+    <div class="form-group">
+      <label>主模型 (Model)</label>
+      <input type="text" id="model" placeholder="例如: gpt-4o">
+    </div>
+    <div class="form-group">
+      <label>子模型 (Sub Model)</label>
+      <input type="text" id="sub_model">
+    </div>
+  </div>
+
+  <!-- AutoDL 設定 -->
+  <div class="section">
+    <div class="section-title">☁️ AutoDL 遠端連線</div>
+    <div class="form-group">
+      <label>登入指令 (SSH)</label>
+      <input type="text" id="autodl_login">
+    </div>
+    <div class="form-group">
+      <label>連線密碼</label>
+      <input type="password" id="autodl_password">
+    </div>
+    <div class="form-group">
+      <label>遠端執行指令</label>
+      <input type="text" id="autodl_remote">
+    </div>
+  </div>
+
+  <!-- 進階與功能設定 -->
+  <div class="section">
+    <div class="section-title">⚙️ 進階與功能設定</div>
+    <div class="form-group">
+      <label>天氣定位 (Location)</label>
+      <input type="text" id="weather_location">
+    </div>
+    <div class="form-group">
+      <label>視覺冷卻時間 (秒)</label>
+      <input type="number" id="vision_cooldown">
+    </div>
+    <div class="form-group">
+      <label>視覺 MSE 閾值</label>
+      <input type="number" step="0.1" id="vision_mse">
+    </div>
+    <div class="form-group">
+      <label>Google 日曆憑證路徑</label>
+      <input type="text" id="gcal_credentials_path">
+    </div>
+    <div class="form-group" style="margin-top: 15px;">
+      <label>啟用 Google 日曆</label>
+      <input type="checkbox" id="enable_google_calendar">
+    </div>
+    <div class="form-group">
+      <label>勿擾模式 (DND)</label>
+      <input type="checkbox" id="do_not_disturb">
+    </div>
+    <!-- 👇 [新增] 開啟開發者終端機選項 -->
+    <div class="form-group" style="margin-top: 15px; border-top: 1px dashed var(--border-color); padding-top: 15px;">
+      <label>顯示前端終端機</label>
+      <input type="checkbox" id="show_terminal">
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <button id="saveBtn">💾 儲存設定</button>
+    <span id="status"></span>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    // 取得所有 DOM 元素
+    const els = {
+      api_key: document.getElementById('api_key'), // 👈 改為 api_key
+      base_url: document.getElementById('base_url'),
+      model: document.getElementById('model'),
+      sub_model: document.getElementById('sub_model'),
+      weather_location: document.getElementById('weather_location'),
+      autodl_login: document.getElementById('autodl_login'),
+      autodl_password: document.getElementById('autodl_password'),
+      autodl_remote: document.getElementById('autodl_remote'),
+      enable_google_calendar: document.getElementById('enable_google_calendar'),
+      gcal_credentials_path: document.getElementById('gcal_credentials_path'),
+      vision_cooldown: document.getElementById('vision_cooldown'),
+      vision_mse: document.getElementById('vision_mse'),
+      do_not_disturb: document.getElementById('do_not_disturb'),
+      show_terminal: document.getElementById('show_terminal') // 👈 [新增]
+    };
+
+    const statusText = document.getElementById('status');
+
+    // 視窗載入時：向主進程索取 config 並填入表單
+    window.onload = async () => {
+      const config = await ipcRenderer.invoke('get-config');
+      if (config.error) {
+        statusText.textContent = "無法載入設定檔！";
+        statusText.style.color = "red";
+        return;
+      }
+
+      // 填入資料
+      els.api_key.value = config.api_key || ''; // 👈 改為 api_key
+      els.base_url.value = config.base_url || ''; // 👈 [新增]
+      els.model.value = config.model || '';
+      els.sub_model.value = config.sub_model || '';
+      els.weather_location.value = config.weather_location || '';
+      
+      if (config.autodl) {
+        els.autodl_login.value = config.autodl.login_command || '';
+        els.autodl_password.value = config.autodl.password || '';
+        els.autodl_remote.value = config.autodl.remote_command || '';
+      }
+
+      els.enable_google_calendar.checked = config.enable_google_calendar || false;
+      els.gcal_credentials_path.value = config.gcal_credentials_path || '';
+      els.vision_cooldown.value = config.vision_cooldown_seconds || 300;
+      els.vision_mse.value = config.vision_mse_threshold || 500.0;
+      els.do_not_disturb.checked = config.do_not_disturb || false;
+      els.show_terminal.checked = config.show_terminal || false; // 👈 [新增] 預設為 false
+    };
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      // 確保將輸入的值轉回正確的型態 (Number, Boolean, String)
+      const newConfig = {
+        api_key: els.api_key.value, // 👈 改為 api_key
+        base_url: els.base_url.value, // 👈 [新增]
+        model: els.model.value,
+        sub_model: els.sub_model.value,
+        weather_location: els.weather_location.value,
+        autodl: {
+          login_command: els.autodl_login.value,
+          password: els.autodl_password.value,
+          remote_command: els.autodl_remote.value
+        },
+        enable_google_calendar: els.enable_google_calendar.checked,
+        gcal_credentials_path: els.gcal_credentials_path.value,
+        vision_cooldown_seconds: parseInt(els.vision_cooldown.value, 10),
+        vision_mse_threshold: parseFloat(els.vision_mse.value),
+        do_not_disturb: els.do_not_disturb.checked,
+        show_terminal: els.show_terminal.checked // 👈 [新增]
+      };
+
+      try {
+        const result = await ipcRenderer.invoke('save-config', newConfig);
+        if (result.success) {
+          statusText.textContent = "✔ 儲存成功！系統即將重新啟動...";
+          statusText.style.color = "green";
+          
+          // 👇 [新增] 儲存成功後，呼叫後端的 shutdown API 觸發重啟
+          setTimeout(() => {
+            fetch('http://localhost:8000/shutdown').catch(() => {
+              // fetch 在後端關閉時必定會拋出網路錯誤(因為伺服器瞬間消失了)
+              // 這是正常的，所以我們用 catch 把它忽略掉
+            });
+          }, 1000); // 延遲 1 秒讓使用者看清楚「儲存成功」的訊息
+
+        } else {
+          throw new Error(result.error);
+        }
+      } catch (err) {
+        statusText.textContent = "❌ 儲存失敗：" + err.message;
+        statusText.style.color = "red";
+      }
+    });
+  </script>
+</body>
+</html>

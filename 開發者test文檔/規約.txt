@@ -1,0 +1,169 @@
+你好，我是負責前端 Live2D 桌寵展示層的開發者。目前前端的 Electron + PixiJS 架構、Live2D 動作/表情渲染，以及基於 Web Audio API 的即時聲波對嘴系統已經全部建置完畢。
+
+接下來需要請你開發中轉層（Middleware）。你的模塊需要負責接收大語言模型（如 OpenAI）的回覆或是隨機觸發屏幕視覺，問候等...將其解析、觸發 TTS（文字轉語音）生成音檔，或是大模型判斷需要動用模塊，例如屏幕視覺，時鐘等並將結果回傳大模型，最後將要表現的話語或情緒打包成符合以下規約的 JSON 格式回傳給前端，以及轉傳tts語音。
+
+請嚴格遵守以下資料格式與傳輸規約：
+
+📦 1. 核心 JSON 傳輸格式 (Response Payload)
+前端每次發出請求後，請求json資料格式如下:
+JSON
+{
+  "type": "text", // 如果是打字對話，傳入 "text"；如果是摸頭，傳入 "action"
+  "content": "你今天過得好嗎？" // 若 type 為 text，這裡是使用者打的字；若 type 為 action，這裡會是 "摸頭"
+}
+前端每次發出請求後，預期收到的 JSON 資料結構如下：
+
+JSON
+{
+  "reply_zh": "哼！將吾這個大笨蛋，我才沒有在等你呢！",
+  "reply_jp":"",
+  "emotion": 4,
+  "playMotion": true,
+  "motion": "Tapface",
+  "audio_url": "./assets/Murasame/sounds/response_1701234567.mp3"
+
+}
+📝 2. 欄位定義與約束規則
+reply_zh (String) - 必填
+reply_jp (String) - 必填
+定義：要顯示在前端對話框中的繁體中文文字和傳遞給tts的日文原文。
+
+規則：純文字，不可包含 Markdown 或 HTML 標籤。
+
+emotion (Integer) - 選填
+
+定義：說這句話時對應的面部表情。前端已經寫好語音播畢後自動還原為預設表情的邏輯，你只需傳送說話當下的表情即可。若已有動作則表情不會顯現。
+
+表情字典規約（請將大模型的意圖對應至此數字）：
+
+0 = 開心
+
+1 = 難過 / 失望
+
+2 = 不高興
+
+3 = 嫌棄
+
+4 = 生氣
+
+5 = 預設 (平常臉)
+
+6 = 害羞
+
+playMotion (Boolean) - 必填
+
+定義：是否要觸發身體動作。
+
+規則：若為 true，前端會去讀取 motion 欄位；若為 false，前端會忽略動作指令，只改變表情與嘴型。
+
+motion (String) - 選填
+
+定義：要播放的 Live2D 動作名稱（需與模型 .model3.json 中的定義完全一致）。
+
+範例："Tapface", "Tapxiongbu", "Tapqunzi" 等。若 playMotion 為 false，此欄位可設為空字串 "" 或 null。
+
+audio_url (String) - 必填
+
+定義：TTS 生成後的音檔路徑。
+
+規則與注意事項：前端使用的是原生的 new Audio() 進行即時頻譜分析對嘴。請務必確保 TTS 生成的音檔已經存入本地實體路徑，並回傳前端可存取的相對路徑（例如存放在 assets/Murasame/sounds/ 目錄下），或者提供一個沒有 CORS 限制且可串流播放的本地 API 網址（例如 http://localhost:8000/audio/123.mp3）。
+
+⚙️ 3. 前端行為預期機制（供你參考）
+為了讓你的中轉邏輯更簡潔，請知悉前端已經內建了以下防呆與自動化機制：
+
+自動對嘴：前端會自動解析 audio_url 的聲波，你不需要額外計算唇形同步時間軸。
+
+表情自動歸零：音檔播放結束的瞬間，前端會自動將表情切換回 5（預設），你不需要另外發送「結束表情」的指令。
+
+眼神跟隨：說話期間角色會自動直視正前方，說完後會自動恢復跟隨滑鼠，此部分無需後端控制。
+
+請根據上述規約，搭建與大模型及 TTS 服務的橋樑，並確保最終拋給前端的 API Response 符合此 JSON 格式。預期模組含有時鐘，天氣，openai api大腦，openai api視覺辨識，tts語音合成，中轉層還可能需要接收來自設定檔的更改及產出日誌
+*補充開發需求：
+
+1.設定檔管理 (Config)：中轉層需能讀取/寫入本地 config.json（包含 OpenAI API Key、SSH 連線資訊、TTS 模式等），並提供介面讓設定頁面修改。
+
+2.日誌系統 (Logging)：需在本地端輸出詳細的運行 Log（包含 OpenAI 回應狀態、TTS 耗時、錯誤捕捉），方便進行 Debug。
+
+3.主動觸發與外掛 (Background Tasks)：中轉層需具備背景排程能力（例如定時檢查螢幕變化率或時鐘/天氣資料），當條件觸發時，能主動組織語言、呼叫 TTS 與視覺，並透過  WebSocket 或主動推送機制讓桌寵開口說話。
+##中轉層
+這是一份為「下一個 AI 開發者（或協作者）」準備的系統交接與開發指南。你可以直接將以下內容複製並貼給下一個負責開發其他模塊（例如 TTS 語音模塊、設定頁面、或前端優化）的 AI 助手，它就能無縫接軌我們目前的進度！
+
+---
+中轉層
+====================================================================================================================================================
+1. 我們這個專案在做什麼？
+本專案是一個基於 Electron + PixiJS 架構的桌面虛擬桌寵系統（以《千戀＊萬花》中的角色「叢雨」為核心）。
+前端已經建置完畢，包含 Live2D 動作/表情渲染、基於 Web Audio API 的即時聲波對嘴系統。
+而我們現在正在完善的 Python 中轉層（Middleware） 則扮演 AI Agent（智能體）編排器 的角色，負責串接 Gemini 大腦 API、ChromaDB 長期記憶檢索、桌面視覺截圖、TTS 語音合成 以及 背景生理時鐘排程，並將處理好的結構化數據透過 WebSocket 即時推播給前端渲染。
+
+2. 環境與依賴套件（用戶端需安裝）
+中轉層運行於 Python 環境中。請確保用戶端已安裝以下核心套件：
+
+Bash
+pip install fastapi uvicorn websockets google-generativeai chromadb mutagen mss pillow
+FastAPI / Uvicorn / WebSockets：提供高效能的 WebSocket 雙向通訊與本地靜態檔案伺服器（解決 CORS 限制，讓前端安全讀取本機音檔）。
+
+Google GenerativeAI：連接 Gemini 大腦，並透過 response_mime_type="application/json" 強制輸出結構化資料。
+
+ChromaDB：本地端向量資料庫，用於實現叢雨的「長期記憶與語意檢索」。
+
+Mutagen：用於精準解析生成的 MP3 音檔長度（秒數），以便中轉層計算語音播畢時間並控制多段對話的發送間隔。
+
+MSS / Pillow：用於極速截圖與圖片等比例壓縮，支援大腦的「桌面視覺（Vision）」功能。
+
+3. 如何掛接中轉層（系統架構與通訊方式）
+中轉層採用 WebSocket 進行前後端雙向通訊，並輔以靜態檔案掛載：
+
+WebSocket 連線端點：
+
+前端需連線至：ws://localhost:8000/ws
+
+靜態音訊代理：
+
+中轉層會在本地建立靜態目錄，將 TTS 生成的音檔存入 assets/Murasame/sounds/。
+
+前端可直接透過 http://localhost:8000/audio/xxx.mp3 讀取音檔，供 PixiJS 與 Web Audio API 進行即時頻譜對嘴。
+
+4. 傳遞給 TTS 模組的資料與預期回傳規約
+中轉層會解析大腦的輸出，並將數據拆分為多段對話（支援連續動作與表情轉折）。若 TTS 模組要接入此流程，需注意以下資料傳遞與回傳規約：
+
+📥 來自大腦（Gemini）並交由 TTS 處理的資料結構：
+大腦輸出會包含一個 messages 陣列，每段對話包含：
+
+reply_zh (String)：繁體中文對話文字（顯示於前端對話框）。
+
+reply_jp (String)：【傳遞給 TTS 的核心資料】 準確的日文翻譯原文（供 TTS 轉語音使用）。
+
+emotion (Integer)：面部表情代碼（0=開心, 1=難過, 2=不高興, 3=嫌棄, 4=生氣, 5=預設, 6=害羞）。
+
+playMotion (Boolean)：是否觸發身體動作。
+
+motion (String)：Live2D 動作名稱（需與 .model3.json 一致，例如 Greeting_Morning, Tapface 等）。
+
+📤 最終打包並回傳給前端的 JSON 規約：
+中轉層在結合 TTS 生成的音檔與計算完時長後，會逐段發送以下格式給前端：
+
+JSON
+{
+  "reply_zh": "主人真是的～",
+  "reply_jp": "ご主人様ったら〜",
+  "emotion": 2,
+  "playMotion": true,
+  "motion": "Angry_Shout",
+  "audio_url": "http://localhost:8000/audio/response_1701234567.mp3"
+}
+5. 擴充模組狀態碼（Action Code 決策機制）
+大腦在解析用戶輸入時，會根據情境回傳對應的 action_code，中轉層會據此調用對應的外部模組：
+
+action_code = 1：一般對話。中轉層直接進行分段、調用 TTS 並回傳給前端。
+
+action_code = 2：請求桌面視覺。中轉層會自動調用 mss 截取當前螢幕、轉為 Base64 後再次交給 Gemini 進行圖文分析。
+
+action_code = 3：請求天氣資訊。中轉層將接入天氣 API 抓取即時氣象，並將結果補足給大腦。
+
+"do_not_disturb" 參數。true 代表開啟勿擾（安靜模式），false 代表關閉勿擾（正常主動搭話）
+
+
+待修bug 暫無
+
+未實裝:語音分辨模組(次要)

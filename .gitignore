@@ -1,0 +1,5 @@
+node_modules/
+__pycache__/
+pet_backend/config.json
+pet_backend/logs/
+assets/Murasame/sounds/

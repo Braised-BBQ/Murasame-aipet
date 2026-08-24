@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>叢雨 AI 桌寵</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: transparent !important;
+    }
+    
+    /* 畫布層：放在底層 (z-index: 1) */
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1; 
+    }
+    
+    /* 對話與輸入層：放在上層 (z-index: 10) */
+    /* 對話與輸入層：固定在左側偏下 */
+    #chat-container {
+      position: absolute;
+      bottom: 55%;       /* 離底部約四分之一的高度 */
+      left: 10px;        /* 貼齊視窗左側 */
+      width: 180px;      /* 限制寬度，確保文字不會超過左半邊 */
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    #dialogue-text {
+      color: white;
+      font-size: 14px;   /* 【字體縮小】原本是 20px，改為 14px */
+      font-family: "Microsoft YaHei", sans-serif;
+      font-weight: bold;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all; /* 確保中文字能正常換行 */
+      text-shadow: 
+        -1px -1px 0 #000, 1px -1px 0 #000,
+        -1px  1px 0 #000, 1px  1px 0 #000,
+         2px  2px 3px rgba(0,0,0,0.8);
+      display: none; 
+    }
+
+    #chat-input {
+      pointer-events: auto; 
+      width: 100%;       /* 寬度隨容器限制在 180px */
+      padding: 6px;      /* 內邊距縮小 */
+      box-sizing: border-box;
+      border: 1px solid rgba(255,255,255,0.8);
+      border-radius: 6px;
+      background-color: rgba(0,0,0,0.7);
+      color: white;
+      font-size: 12px;   /* 【輸入框字體縮小】改為 12px */
+      outline: none;
+      display: none; 
+      box-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+  </style>
+  
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.x/dist/pixi.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/cubism4.min.js"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  
+  <div id="chat-container">
+    <div id="dialogue-text"></div>
+    <input type="text" id="chat-input" placeholder="對叢雨說些什麼 (按 Enter 送出)...">
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
