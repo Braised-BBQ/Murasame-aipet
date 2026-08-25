@@ -18,6 +18,7 @@ from core.gcal_helper import GoogleCalendarManager
 from core.vision import capture_screen_image, calculate_image_mse, detect_screen_changes_async, analyze_screen_async
 import time
 from logging.handlers import RotatingFileHandler
+import glob
 
 last_vision_trigger_time = time.time()
 # -------------------------------------------------------------------
@@ -187,7 +188,18 @@ monitor_task = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global time_engine , monitor_task
-    
+    # ==========================================
+    # 1. 啟動時：清除上次殘留的 TTS 音檔快取
+    # ==========================================
+    logger.info("🧹 正在清除上次殘留的語音快取...")
+    try:
+        # 尋找 AUDIO_DIR 底下所有以 response 開頭並以 .wav 結尾的檔案
+        cache_pattern = os.path.join(AUDIO_DIR, "response*.wav")
+        for f in glob.glob(cache_pattern):
+            os.remove(f)
+        logger.info("✅ 語音快取清除完畢！")
+    except Exception as e:
+        logger.error(f"清除語音快取失敗: {e}")
     autodl_config = config.get("autodl", {})
     if autodl_config:
         logger.info("🚀 正在啟動 AutoDL SSH 隧道...")

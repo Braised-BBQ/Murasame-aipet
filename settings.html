@@ -119,7 +119,7 @@
       <input type="text" id="model" placeholder="例如: gpt-4o">
     </div>
     <div class="form-group">
-      <label>子模型 (Sub Model)</label>
+      <label>子模型 (Sub Model，視覺和記憶模型使用)</label>
       <input type="text" id="sub_model">
     </div>
   </div>
@@ -257,7 +257,7 @@
       try {
         const result = await ipcRenderer.invoke('save-config', newConfig);
         if (result.success) {
-          statusText.textContent = "✔ 儲存成功！系統即將重新啟動...";
+          statusText.textContent = "✔ 儲存成功！";
           statusText.style.color = "green";
           
           // 👇 [新增] 儲存成功後，呼叫後端的 shutdown API 觸發重啟

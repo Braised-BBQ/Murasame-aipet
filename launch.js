@@ -9,10 +9,15 @@ let backendProcess = null;
 let frontendProcess = null;
 let isBackendRestarting = false;
 
-// 檢查後端是否已經啟動成功 (透過 ping 本地 8000 埠)
+// --- [新增] 安全重啟限制參數 ---
+let restartCount = 0;
+const MAX_RESTARTS = 3;
+const STABLE_RUNTIME = 15000;
+let stableTimer = null;
+// -------------------------------
+
 function checkBackendReady(callback) {
   const req = http.get('http://localhost:8000/docs', (res) => {
-    // 只要能連上 FastAPI 的文件頁面或任何回應，代表後端已經啟動完畢
     if (res.statusCode < 500) {
       callback();
     } else {
@@ -21,12 +26,10 @@ function checkBackendReady(callback) {
   });
 
   req.on('error', () => {
-    // 連線失敗（代表後端還沒開好），每秒重試一次
     setTimeout(() => checkBackendReady(callback), 1000);
   });
 }
 
-// 1. 啟動 Python 中轉層
 function startBackend() {
   console.log('----------------------------------------');
   console.log('[Launcher] 正在啟動 Python 中轉層...');
@@ -37,35 +40,53 @@ function startBackend() {
     stdio: 'inherit'
   });
 
+  // 穩定計時器：如果後端活超過 15 秒，重置重啟次數
+  if (stableTimer) clearTimeout(stableTimer);
+  stableTimer = setTimeout(() => {
+    if (restartCount > 0) {
+      console.log('[Launcher] 🌟 後端已穩定運行，重啟計數器歸零。');
+      restartCount = 0; 
+    }
+  }, STABLE_RUNTIME);
+
   backendProcess.on('exit', (code) => {
     console.log(`\n[Launcher] 警告：Python 中轉層已關閉 (Code: ${code})`);
+    
+    // 熔斷機制：超過次數就不再重啟
+    restartCount++;
+    if (restartCount > MAX_RESTARTS) {
+      console.log(`\n[Launcher] ❌ 嚴重錯誤：連續崩潰超過 ${MAX_RESTARTS} 次！觸發安全熔斷。`);
+      stopFrontend(); 
+      return; 
+    }
+
     isBackendRestarting = true;
+    console.log(`[Launcher] 準備進行第 ${restartCount}/${MAX_RESTARTS} 次自動重啟...`);
 
     stopFrontend(() => {
       console.log('[Launcher] 正在等待後端完全關閉並準備重啟...');
       setTimeout(() => {
         startBackend();
         
-        // 開始探測後端是否開機完成，完成後才啟動前端
         console.log('[Launcher] 正在等待後端初始化完成...');
         checkBackendReady(() => {
           console.log('[Launcher] ✅ 後端已完全就緒！準備啟動前端...');
           setTimeout(() => {
             isBackendRestarting = false;
             startFrontend();
-          }, 1000); // 確保後端穩定後啟動前端
+          }, 1000); 
         });
       }, 2000);
     });
   });
 }
 
-// 2. 啟動 Electron 前端
 function startFrontend() {
   if (isBackendRestarting) return;
-  console.log('[Launcher] 正在啟動 Electron 前端 (npm start)...');
+  console.log('[Launcher] 正在啟動 Electron 前端...');
   
-  frontendProcess = spawn('npm', ['start'], {
+  // 🚀 關鍵修改：避免 npm start 的熱重載監聽，改為直接啟動 electron
+  frontendProcess = spawn('npx', ['electron', '.'], {
     cwd: FRONTEND_DIR,
     shell: true,
     stdio: 'inherit'
@@ -78,7 +99,6 @@ function startFrontend() {
   });
 }
 
-// 關閉前端輔助函式
 function stopFrontend(callback) {
   if (frontendProcess) {
     console.log('[Launcher] 正在關閉 Electron 前端...');
