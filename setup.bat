@@ -84,4 +84,8 @@ if exist package.json (
     )
 )
 
+<<<<<<< HEAD
 pause
+=======
+pause
+>>>>>>> 8f07de200529ad04dceb25111b477f9ac8415b2e
