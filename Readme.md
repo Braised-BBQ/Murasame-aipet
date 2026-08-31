@@ -72,9 +72,17 @@
 ### 4. 設定檔配置
 您可以於啟動後透過桌面小托盤召喚出設定頁面修改，填入你的 API 金鑰與 TTS 伺服器連線資訊（`login_command`、`password`）。
 
-### 5. TTS 合成伺服器架設
-請於 AutoDL 租用實例，並導入社區鏡像 `kuxiaowo/AIpet-Murasame/AIpet-Murasame_GPT-SoVITs:v1.2.2`。第一次開機後請至控制台，將專案資料夾內的 `reference_voices.zip` 上傳並解壓替代原資料夾即可。
+### 5. 語音模型下載與 TTS 伺服器架設
+由於 GitHub 檔案大小限制，叢雨的專屬語音模型（GPT-SoVITS 權重）與情緒參考音檔已獨立存放於雲端硬碟。請依照以下步驟完成 TTS 伺服器配置：
+ - **本地部屬**
+1. **取得模型包**：請前往  Google Drive 下載 (https://drive.google.com/drive/folders/1ZSxYzQgJkMsCXLOG-xFMHwwmNecEW-oH?usp=drive_link) 下載語音模型檔。
+2. **解壓模型**:將資料夾內的兩個壓縮檔解壓並放到專案根目錄下(注意，務必把兩個資料夾從原資料夾內拿出來放到根目錄下)。
 
+ - **雲端部屬**
+1. **租用與初始化實例**：於 AutoDL 租用實例，並導入社區鏡像 `kuxiaowo/AIpet-Murasame/AIpet-Murasame_GPT-SoVITs:v1.2.2`。
+2. **上傳並部署模型**：第一次開機後請至 AutoDL 網頁控制台，將解壓縮後的檔案上傳至指定路徑：
+   - 將 `reference_voices` 壓縮檔上傳並解壓替換掉鏡像中的原資料夾。
+預設為雲端部屬，可在啟動後切換。
 ### 6. 如何互動
 - **移動角色**：按住滑鼠右鍵拖曳模型。
 - **對話**：點擊滑鼠左鍵開啟對話框。
@@ -126,7 +134,6 @@
 ## ⚠️ 系統限制與來源版權
 
 ### 當前限制
-- 未實作本地部屬接口。
 - 未配備語音輸入。
 
 
