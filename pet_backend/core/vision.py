@@ -10,6 +10,8 @@ from PIL import ImageGrab, Image
 from openai import AsyncOpenAI
 from typing import Any
 
+from .config_manager import config_manager  # 加入這行
+
 logger = logging.getLogger("VisionEngine")
 
 # -------------------------------------------------------------------
@@ -19,7 +21,9 @@ config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../config
 with open(config_path, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-api_key = config.get("openai_api_key", config.get("api_key", ""))
+# 取得 api_key，如果沒填寫或拿到空字串，就給一個假字串騙過啟動檢查
+raw_key = config.get("openai_api_key", config.get("api_key", ""))
+api_key = raw_key if raw_key else "sk-dummy-key"
 base_url = config.get("base_url", None)
 
 client = AsyncOpenAI(
@@ -66,6 +70,14 @@ async def detect_screen_changes_async(model_name: str, previous_scene_json: str,
     prompt_with_context = VISION_DETECTOR_PROMPT + f"\n上一轮场景 JSON：<previous_scene>{previous_scene_json}</previous_scene>"
     base64_image = encode_image_to_base64(current_img)
 
+    # --- 動態獲取 API Key 與建立 Client ---
+    raw_key = config_manager.get("openai_api_key", config_manager.get("api_key", ""))
+    api_key = raw_key if raw_key else "sk-dummy-key"
+    base_url = config_manager.get("base_url", None)
+    
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    # -------------------------------------
+
     try:
         response = await client.chat.completions.create(
             model=model_name,
@@ -102,8 +114,16 @@ async def analyze_screen_async(model_name: str) -> str:
     if not current_img:
         return "系統提示：無法獲取螢幕截圖。"
 
-    prompt = "請簡短描述這張螢幕截圖中出現了什麼（包含主要視窗、正在進行的活動或重要的文字內容），請用繁體中文回答，不需要過度冗長。"
+    prompt = "請簡短描述這張螢幕截圖中出現了什麼（包含主要視窗、正在進行的活動或重要的文字內容），請忽略有關桌寵的事實，請用繁體中文回答，不需要過度冗長。"
     base64_image = encode_image_to_base64(current_img)
+    
+    # --- 動態獲取 API Key 與建立 Client ---
+    raw_key = config_manager.get("openai_api_key", config_manager.get("api_key", ""))
+    api_key = raw_key if raw_key else "sk-dummy-key"
+    base_url = config_manager.get("base_url", None)
+    
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    # -------------------------------------
     
     try:
         response = await client.chat.completions.create(

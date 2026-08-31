@@ -256,26 +256,55 @@ async function init() {
     showDialogue("【叢雨】\n——著陸!");
   }, 500);
 
+  // ==========================================
+  // --- GPT-SoVITS 專用自然動態對嘴引擎 ---
+  // ==========================================
   let smoothedMouth = 0;
-  app.ticker.add(() => {
+  let talkTime = 0; 
+
+  app.ticker.add((delta) => {
     if (model && model.internalModel && model.internalModel.coreModel) {
       if (window.isSpeaking && analyser) {
         analyser.getByteFrequencyData(dataArray);
-        let sum = 0; let count = 0;
-        for (let i = 2; i < 40; i++) { sum += dataArray[i]; count++; }
-        const avg = sum / count;
         
-        let targetMouth = avg / 35; 
-        targetMouth = Math.min(1, Math.max(0, targetMouth));
-        smoothedMouth += (targetMouth - smoothedMouth) * 0.4;
+        // 1. 取得整體音量
+        let sum = 0; 
+        for (let i = 0; i < 60; i++) { sum += dataArray[i]; }
+        const avgVolume = sum / 60;
         
+        let targetMouth = 0;
+
+        // 2. 音量大於一定數值，代表真的在發聲
+        if (avgVolume > 5) { 
+          // 💡 降低速度：從原本的 0.8 改成 0.15，讓開合頻率符合人類真實說話節奏
+          talkTime += delta * 0.15; 
+          
+          // 產生自然的節奏波浪 (0 ~ 1)
+          const baseWave = (Math.sin(talkTime) + 1) / 2; 
+          
+          // 將音量轉換為 0 ~ 1 的比例 (假設最大音量約為 150)
+          const volumeRatio = Math.min(1, avgVolume / 60); 
+          
+          // 💡 終極魔法：60% 靠音量決定嘴巴張多大，40% 靠數學波浪模擬嘴唇的碎動
+          targetMouth = (volumeRatio * 0.6) + (baseWave * 0.4); 
+          
+          // 限制範圍，避免嘴巴張得太誇張破圖
+          targetMouth = Math.min(0.8, Math.max(0.1, targetMouth));
+        } else {
+          // 遇到逗號或換氣，立刻閉嘴
+          targetMouth = 0;
+        }
+        
+        // 💡 降低緩衝係數 (從 0.4 降到 0.25)，讓嘴巴動作更柔和、不突兀
+        smoothedMouth += (targetMouth - smoothedMouth) * 0.25;
         model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', smoothedMouth);
       } else {
-        smoothedMouth = 0;
-        model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
+        // 沒說話時，平滑地閉上嘴巴
+        smoothedMouth += (0 - smoothedMouth) * 0.25;
+        model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', smoothedMouth);
       }
     }
-  }, PIXI.UPDATE_PRIORITY.LOW); 
+  }, PIXI.UPDATE_PRIORITY.LOW);
 }
 
 // ==========================================

@@ -13,11 +13,12 @@
 - **模組化中轉架構**：採用 FastAPI 建立中間層樞紐，統籌大腦、視覺、時間排程與語音資源。
 - **長期記憶與排程**：具備自動識別長期記憶能力，以及排程自動提醒功能。
 - **一鍵自動部署**：提供完整環境建置腳本，支援托盤最小化執行、後端連線日誌留存及後端重啟自動連動機制。
+- **隨機事件推送**:依照當前時間，若未處於勿擾模式則有概率觸發隨機事件。
 
 ## 📁 專案架構
 
 ```plaintext
-D:\murasame_public\
+\Murasame-aipet-main
 ├── setup.bat                  # 一鍵建置與下載依賴環境腳本
 ├── start.bat                  # Windows 快速啟動檔 (呼叫 launch.js)
 ├── test_start.bat             # 終端監視啟動腳本
@@ -40,13 +41,14 @@ D:\murasame_public\
         ├── gcal_helper.py     # Google Calendar API 連線與行程同步
         ├── memory.py          # 對話記憶與上下文歷史紀錄管理
         ├── time_engine.py     # 時間排程引擎與主動推播觸發器
+        ├──config_manager.py   # 熱修改檔案處理
         └── vision.py          # 螢幕截圖、MSE 差異比對與視覺解析
 ```
 
 ## 🚀 快速開始
 
 ### 1. 環境需求
-- Node.js: v18+
+- Node.js: v18+(前往node.js官網:https://nodejs.org/zh-tw)
 - Python: v3.10+
 - Git (建議安裝)
 
@@ -55,13 +57,20 @@ D:\murasame_public\
 腳本將自動幫你完成以下建置：
 - 自動執行 `npm install` 安裝前端所需套件。
 - 自動執行 `pip install -r requirements.txt` 安裝 Python 中轉層依賴。
-
-### 3. 設定檔配置
-請編輯 `pet_backend/config.json`（或啟動後透過桌面設定頁面修改），填入你的 API 金鑰與 TTS 伺服器連線資訊（`login_command`、`password`）。
-
-### 4. 啟動應用
-建置完畢後，雙擊專案根目錄下的 `start.bat` 即可啟動！
+- 在執行setup啟動時，會自動建置環境與下載依賴，在最後請確認是否有如下進度條(特別注意總項數108):
+ ```
+ gle-auth-httplib2, google-api-core, google-api-python-client, chromadb
+   ━━━━━━━╺━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  19/108 [pygments]
+ ```
+- 若是有成功出現以上進度條，則環境建置成功，靜待程式結束後關閉終端機。
+- 若無則請將終端機錯誤訊息回報。
+  
+### 3. 啟動應用
+建置完畢後，雙擊專案根目錄下的 `start.bat` 即可啟動！第一次啟用建議使用`test_start.bat`，若有錯誤方便確認。
 啟動器會自動開啟 Python 中轉層，待 FastAPI 與 AutoDL 隧道準備就緒後，將自動拉起 Electron 前端視窗。
+
+### 4. 設定檔配置
+您可以於啟動後透過桌面小托盤召喚出設定頁面修改，填入你的 API 金鑰與 TTS 伺服器連線資訊（`login_command`、`password`）。
 
 ### 5. TTS 合成伺服器架設
 請於 AutoDL 租用實例，並導入社區鏡像 `kuxiaowo/AIpet-Murasame/AIpet-Murasame_GPT-SoVITs:v1.2.2`。第一次開機後請至控制台，將專案資料夾內的 `reference_voices.zip` 上傳並解壓替代原資料夾即可。
@@ -72,8 +81,17 @@ D:\murasame_public\
 - **摸頭觸發**：將滑鼠移動至角色頭部並滑動，即可觸發摸頭反應。
 - **開啟設定**：點擊系統列右下角的托盤小圖示，即可開啟使用者設定介面。
 
-### 7. Google 日曆掛接（可選）
+### 7. Google 日曆掛接（可選，不推薦使用）
 請至 Google Cloud Console 登入帳號並申請 Google Calendar API，取得憑證 JSON 檔並改名為 `credentials.json` 放入 `pet_backend/` 目錄中。預設為關閉狀態，若不使用則無須放置該檔案。
+
+### 8.退出
+- 退出時請從托盤內退出，若只關掉當下視窗後端並不會關閉。
+- 也可以選擇關掉終端機(以test_start.bat開啟的話)。
+- 若只關掉前端的話，後端會一直執行，此時可以再啟動一遍，啟動器會殺掉舊進程，新的再用托盤關閉即可。
+
+### 9.更新
+- 更新程式時，可以選擇保留config.json和chroma_db資料夾，更新程式後把舊的兩個檔案放回原處即可。
+- chroma_db為長期記憶庫，如若不想讓桌寵忘記你，建議保留。
 
 ## 📡 系統通訊規約 (Data Contract)
 前端與 Python 中轉層透過 WebSocket (`ws://localhost:8000/ws`) 傳輸 JSON 數據：
@@ -100,21 +118,22 @@ D:\murasame_public\
 
 ## 🛠️ 開發與除錯
 - **後端運行日誌**：存放在 `pet_backend/logs/system.log`。
-- **托盤控制**：點擊右下角系統托盤圖示可隨時隱藏或召喚叢雨。
-- **快捷設定**：可透過系統托盤右鍵選單開啟 `settings.html` 進行參數設定，儲存後自動重啟程式。
+- **托盤控制**：點擊右下角系統托盤圖示可隨時隱藏或召喚使用者介面。
+- **快捷設定**：可透過系統托盤右鍵選單開啟 `settings.html` 進行參數設定，儲存後熱修改設定。
 - **運行時後端終端監視器**：若需要監看後端終端機輸出，請在啟動時選擇 `test_start.bat`。
+- **關閉進程**:開啟時會自動尋找並砍掉 8000 埠佔用者，請注意。
 
 ## ⚠️ 系統限制與來源版權
 
 ### 當前限制
-- 暫不支援動態調整視窗與模型大小。
-- 修改系統設定後需重啟應用程式方可生效。
 - 未實作本地部屬接口。
+- 未配備語音輸入。
 
 
 ## ⚖️ 許可證與版權聲明 (License & Copyright)
 
 - **Live2D 模型與音訊素材**：本專案包含之 Live2D 角色模型、貼圖及語音素材版權歸原繪師與建模師所有，**不適用於 GPL v3 授權**。僅供非商業學習與交流使用，請勿將美術素材用於任何商業用途或二次散佈。
+- **Live2D 模型提供**:穿越電線(bilibili:https://space.bilibili.com/4494100)
 - **原專案來源**：[kuxiaowo/AIpet-Murasame](https://github.com/kuxiaowo/AIpet-Murasame)
 
 - **代碼建置**：gemini-3.1-pro

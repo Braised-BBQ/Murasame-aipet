@@ -11,7 +11,6 @@ import uvicorn
 from contextlib import asynccontextmanager
 import httpx
 from core.vision import analyze_screen_async
-from core.autodl_tts import AutoDLTTSConnection, AutoDLConnectionError
 from core.brain import ask_brain, ask_brain_proactive, memory
 from core.time_engine import TimeEngine
 from core.gcal_helper import GoogleCalendarManager
@@ -19,6 +18,9 @@ from core.vision import capture_screen_image, calculate_image_mse, detect_screen
 import time
 from logging.handlers import RotatingFileHandler
 import glob
+from core.config_manager import config_manager
+from core.autodl_tts import AutoDLTTSConnection
+from core.tts_manager import TTSManager  # 引入新的管理器
 
 last_vision_trigger_time = time.time()
 # -------------------------------------------------------------------
@@ -67,13 +69,8 @@ def get_audio_duration(file_path: str) -> float:
         logger.error(f"無法讀取音檔長度: {e}")
         return 2.0
 
-config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "config.json"))
-with open(config_path, "r", encoding="utf-8") as f:
-    config = json.load(f)
-    # 若有需要在 main 裡直接拿 base_url 也可以這樣讀取
-    base_url = config.get("base_url", None)
-
 autodl_conn = AutoDLTTSConnection()
+tts_manager = TTSManager(autodl_conn, AUDIO_DIR)
 time_engine = None
 
 # -------------------------------------------------------------------
@@ -83,6 +80,11 @@ async def proactive_trigger_callback(secret_prompt: str):
     logger.info("⏰ 系統時間觸發，正在向大腦請求主動發言...")
     llm_result = await ask_brain_proactive(secret_prompt)
     
+    # 🌟 檢查大腦是否行使了拒絕權 (action_code 為 0 或 messages 為空)
+    if llm_result.get("action_code") == 0 or not llm_result.get("messages"):
+        logger.info("🧠 [主動發言] 大腦選擇保持安靜（拒絕發言）。")
+        return
+
     if llm_result.get("action_code") == 1 and manager.active_connections:
         messages = llm_result.get("messages", [])
         for msg in messages:
@@ -112,23 +114,23 @@ async def proactive_trigger_callback(secret_prompt: str):
             await asyncio.sleep(sleep_time)
 
 async def screen_monitor_loop():
-    """背景視覺監控迴圈 (OpenAI 版 - 含開機冷卻防護與對話優先)"""
+    """背景視覺監控迴圈"""
     global last_vision_trigger_time
-    
     logger.info("👁️ 桌面視覺背景監控已啟動...")
     previous_scene_json = "null"
     last_image = None
-    MSE_THRESHOLD = config.get("vision_mse_threshold", 500.0)
     
-    # 預設改為 OpenAI 的小模型
-    v_model = config.get("sub_model", "gpt-4o-mini")
-    cooldown_seconds = config.get("vision_cooldown_seconds", 600)
-
     while True:
         try:
             await asyncio.sleep(15)
 
-            if config.get("do_not_disturb", False):
+            # --- 將設定移到迴圈內，每次甦醒都動態獲取最新值 ---
+            MSE_THRESHOLD = config_manager.get("vision_mse_threshold", 500.0)
+            v_model = config_manager.get("sub_model", "gpt-4o-mini")
+            cooldown_seconds = config_manager.get("vision_cooldown_seconds", 600)
+            
+            # 即時檢查最新的勿擾模式
+            if config_manager.get("do_not_disturb", False):
                 continue
             
             if not manager.active_connections:
@@ -200,25 +202,17 @@ async def lifespan(app: FastAPI):
         logger.info("✅ 語音快取清除完畢！")
     except Exception as e:
         logger.error(f"清除語音快取失敗: {e}")
-    autodl_config = config.get("autodl", {})
-    if autodl_config:
-        logger.info("🚀 正在啟動 AutoDL SSH 隧道...")
-        try:
-            remote_cmd = "bash -lc 'bash run.sh; bash'"
-            autodl_conn.start(
-                login_command=autodl_config.get("login_command", ""),
-                password=autodl_config.get("password", ""),
-                remote_command=remote_cmd, 
-                progress=lambda msg: logger.info(f"[AutoDL 狀態]: {msg}")
-            )
-            logger.info("✅ AutoDL 連線成功！本地 Port 9880 已就緒。")
-        except AutoDLConnectionError as e:
-            logger.error(f"❌ AutoDL 連線失敗: {e}")
+        
+    # ==========================================
+    # 2. 啟動時：初始化所有子系統
+    # ==========================================
+    logger.info("🚀 正在啟動 TTS 子系統...")
+    await tts_manager.start(config_manager)
             
     gcal_manager = None
-    if config.get("enable_google_calendar"):
+    if config_manager.get("enable_google_calendar"):
         try:
-            gcal_manager = GoogleCalendarManager(config.get("gcal_credentials_path", "credentials.json"))
+            gcal_manager = GoogleCalendarManager(config_manager.get("gcal_credentials_path", "credentials.json"))
             logger.info("✅ Google 日曆掛載成功！")
         except Exception as e:
             logger.warning(f"⚠️ Google 日曆掛載失敗: {e}")
@@ -232,14 +226,46 @@ async def lifespan(app: FastAPI):
 
     monitor_task = asyncio.create_task(screen_monitor_loop())
     logger.info("✅ 視覺監控背景任務已掛載！")
+    
+    # ==========================================
+    # 🚀 分水嶺：伺服器準備好，開始接受前端請求
+    # ==========================================
     yield 
+    
+    # ==========================================
+    # 3. 關閉時：執行清理工作
+    # ==========================================
+    logger.info("🛑 關閉 TTS 服務...")
+    tts_manager.stop()
     
     logger.info("🛑 關閉 AutoDL 連線...")
     autodl_conn.stop()
 
 app = FastAPI(title="Murasame AI Middleware", lifespan=lifespan)
 app.mount("/audio", StaticFiles(directory=AUDIO_DIR), name="audio")
+@app.get("/reload")
+async def reload_settings():
+    logger.info("🔄 收到前端設定更改，正在重新載入設定檔 (熱修改)...")
+    config_manager.load()
+    
+    try:
+        tts_manager.stop() 
+        success = await tts_manager.start(config_manager) 
+        
+        # 【修改這裡】加入 true/false 的判斷
+        if success:
+            logger.info("✅ TTS 熱修改切換成功！")
+            return {"status": "success", "message": "設定已熱修改生效"}
+        else:
+            logger.error("❌ TTS 熱修改失敗，請檢查終端機報錯。")
+            return {"status": "error", "message": "TTS 啟動失敗，請檢查終端機"}
+            
+    except Exception as e:
+        logger.error(f"⚠️ 熱修改時 TTS 切換失敗: {e}")
+        return {"status": "error", "message": f"設定已生效，但 TTS 啟動發生異常: {e}"}
+  
 
+# (原本的 /shutdown 可以保留，作為純粹的關閉程式功能)
 @app.get("/shutdown")
 def shutdown_server():
     logger.info("🛑 收到前端設定更改，正在關閉背景服務...")
@@ -257,44 +283,7 @@ def shutdown_server():
 # 5. TTS 生成功能
 # -------------------------------------------------------------------
 async def generate_tts(text_jp: str, emotion_code: int = 5) -> tuple[str, str]:
-    if not autodl_conn.is_active():
-        logger.warning("AutoDL 未連線，跳過 TTS 生成")
-        return "", ""
-
-    import time
-    filename = f"response_{int(time.time())}.wav"
-    filepath = os.path.join(AUDIO_DIR, filename)
-    audio_url = f"http://localhost:8000/audio/{filename}"
-    tts_api_url = "http://127.0.0.1:9880/tts" 
-    
-    params = {
-        "text": text_jp,
-        "text_lang": "ja", 
-        "prompt_lang": "ja",
-    }
-    folder_name = str(emotion_code)
-    try:
-        ref_root = "/root/reference_voices"
-        ref_audio, prompt_text = autodl_conn.read_reference_metadata(ref_root, folder_name)
-        params["ref_audio_path"] = ref_audio
-        params["prompt_text"] = prompt_text
-    except Exception as e:
-        logger.error(f"無法讀取資料夾 {folder_name} 的參考音訊: {e}，取消合成。")
-        return "", ""
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(tts_api_url, json=params)
-            if response.status_code >= 400:
-                logger.error(f"伺服器退件 (HTTP {response.status_code}): {response.text}")
-                return "", ""
-            response.raise_for_status()
-            with open(filepath, "wb") as f:
-                f.write(response.content)
-            return filepath, audio_url
-    except Exception as e:
-        logger.error(f"TTS 生成發生網路或未知錯誤: {e}")
-        return "", ""
+    return await tts_manager.generate(text_jp, emotion_code)
 
 # -------------------------------------------------------------------
 # 6. WebSocket 連線管理員
@@ -372,13 +361,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if llm_result.get("action_code") == 2:
                     logger.info("🧠 大腦請求調用桌面視覺...")
-                    
                     last_vision_trigger_time = time.time()
-                    logger.info("🔄 主動視覺請求已觸發，重置背景自動監控冷卻時間。")
                     
-                    # 預設改為 OpenAI 的小模型
-                    v_model = config.get("sub_model", "gpt-4o-mini")
-
+                    # 動態獲取模型
+                    v_model = config_manager.get("sub_model", "gpt-4o-mini")
                     screen_description: str = await analyze_screen_async(model_name=v_model)
 
                     llm_result = await ask_brain(
@@ -390,7 +376,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 if llm_result.get("action_code") == 3:
                     logger.info("🌤️ 大腦請求調用天氣資訊...")
                     
-                    target_location = config.get("weather_location", "Taipei")
+                    # 動態獲取天氣位置，加入預設城市防錯
+                    target_location = config_manager.get("weather_location", "Jiali District, Tainan City, Taiwan")
                     weather_info: str = await get_weather_async(target_location)
                     logger.info(f"🌤️ 取得 {target_location} 天氣結果: {weather_info}")
 

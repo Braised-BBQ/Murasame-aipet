@@ -53,7 +53,8 @@
 
     .form-group input[type="text"], 
     .form-group input[type="password"], 
-    .form-group input[type="number"] {
+    .form-group input[type="number"],
+    .form-group select {
       flex: 1;
       padding: 8px 12px;
       border: 1px solid var(--border-color);
@@ -64,7 +65,9 @@
     }
 
     .form-group input:focus { border-color: var(--primary-color); }
-    
+    .form-group select:focus /* 👈 [新增] 這行 */ { 
+      border-color: var(--primary-color); 
+    }
     .form-group input[type="checkbox"] {
       width: 18px;
       height: 18px;
@@ -140,10 +143,33 @@
       <input type="text" id="autodl_remote">
     </div>
   </div>
-
+  <!-- 語音合成 (TTS) 設定 -->
+  <div class="section">
+    <div class="section-title">🗣️ 語音合成 (TTS) 設定</div>
+    <div class="form-group">
+      <label>TTS 執行模式</label>
+      <select id="tts_mode">
+        <option value="autodl">遠端生成 (AutoDL)</option>
+        <option value="local">本地生成 (Local)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>引擎根目錄</label>
+      <input type="text" id="tts_engine_root" placeholder="例如: GPT-SoVITS">
+    </div>
+    <div class="form-group">
+      <label>模型資料夾</label>
+      <input type="text" id="tts_model_dir" placeholder="例如: Murasame_SoVITS">
+    </div>
+  </div>
   <!-- 進階與功能設定 -->
   <div class="section">
     <div class="section-title">⚙️ 進階與功能設定</div>
+    <div class="form-group">
+      <label>模型大小縮放</label>
+      <input type="range" id="model_scale" min="0.5" max="2.0" step="0.1" value="1.0" style="flex:1;">
+      <span id="scale_value" style="margin-left: 10px; width: 40px; text-align: right;">1.0x</span>
+    </div>
     <div class="form-group">
       <label>天氣定位 (Location)</label>
       <input type="text" id="weather_location">
@@ -178,6 +204,8 @@
   <div class="bottom-bar">
     <button id="saveBtn">💾 儲存設定</button>
     <span id="status"></span>
+    <!-- 👇 [新增] 將退出按鈕推到最右邊，並設定為紅色 -->
+    <button id="exitBtn" style="background-color: #f56c6c; margin-left: auto;">❌ 完全退出桌寵</button>
   </div>
 
   <script>
@@ -198,10 +226,20 @@
       vision_cooldown: document.getElementById('vision_cooldown'),
       vision_mse: document.getElementById('vision_mse'),
       do_not_disturb: document.getElementById('do_not_disturb'),
-      show_terminal: document.getElementById('show_terminal') // 👈 [新增]
+      show_terminal: document.getElementById('show_terminal'), // 👈 [新增]
+      tts_mode: document.getElementById('tts_mode'),
+      tts_engine_root: document.getElementById('tts_engine_root'),
+      tts_model_dir: document.getElementById('tts_model_dir'),
+      model_scale: document.getElementById('model_scale')
     };
 
     const statusText = document.getElementById('status');
+    const scaleValueText = document.getElementById('scale_value'); // 👈 [新增] 取得顯示數值的元素
+
+    // 👇 [新增] 讓拉桿拖動時即時更新旁邊的文字
+    els.model_scale.addEventListener('input', (e) => {
+        scaleValueText.textContent = parseFloat(e.target.value).toFixed(1) + 'x';
+    });
 
     // 視窗載入時：向主進程索取 config 並填入表單
     window.onload = async () => {
@@ -218,7 +256,9 @@
       els.model.value = config.model || '';
       els.sub_model.value = config.sub_model || '';
       els.weather_location.value = config.weather_location || '';
-      
+      els.tts_mode.value = config.tts_mode || 'autodl'; // 預設為 autodl
+      els.tts_engine_root.value = config.tts_engine_root || '';
+      els.tts_model_dir.value = config.tts_model_dir || '';
       if (config.autodl) {
         els.autodl_login.value = config.autodl.login_command || '';
         els.autodl_password.value = config.autodl.password || '';
@@ -231,6 +271,10 @@
       els.vision_mse.value = config.vision_mse_threshold || 500.0;
       els.do_not_disturb.checked = config.do_not_disturb || false;
       els.show_terminal.checked = config.show_terminal || false; // 👈 [新增] 預設為 false
+     // 👇 [新增] 載入模型縮放設定
+      const savedScale = config.model_scale || 1.0;
+      els.model_scale.value = savedScale;
+      scaleValueText.textContent = parseFloat(savedScale).toFixed(1) + 'x';
     };
 
     document.getElementById('saveBtn').addEventListener('click', async () => {
@@ -240,6 +284,9 @@
         base_url: els.base_url.value, // 👈 [新增]
         model: els.model.value,
         sub_model: els.sub_model.value,
+        tts_mode: els.tts_mode.value,
+        tts_engine_root: els.tts_engine_root.value,
+        tts_model_dir: els.tts_model_dir.value,
         weather_location: els.weather_location.value,
         autodl: {
           login_command: els.autodl_login.value,
@@ -251,22 +298,26 @@
         vision_cooldown_seconds: parseInt(els.vision_cooldown.value, 10),
         vision_mse_threshold: parseFloat(els.vision_mse.value),
         do_not_disturb: els.do_not_disturb.checked,
-        show_terminal: els.show_terminal.checked // 👈 [新增]
+        show_terminal: els.show_terminal.checked, // 👈 [新增]
+        model_scale: parseFloat(els.model_scale.value) // 👈 [新增] 儲存縮放比例
       };
 
       try {
         const result = await ipcRenderer.invoke('save-config', newConfig);
         if (result.success) {
-          statusText.textContent = "✔ 儲存成功！";
+          statusText.textContent = "✔ 儲存成功！設定已生效";
           statusText.style.color = "green";
           
-          // 👇 [新增] 儲存成功後，呼叫後端的 shutdown API 觸發重啟
+          // 👇 [修改] 儲存成功後，呼叫後端的 reload API 觸發熱修改
+          fetch('http://localhost:8000/reload').catch(err => console.error('後端熱修改請求失敗:', err));
+          
+          // 👇 [新增] 通知 Electron 主進程 (main.js) 調整視窗大小並發送廣播給 index.html
+          ipcRenderer.send('apply-ui-settings');
+
+          // 取消原本會強制重啟的 setTimeout，改為 3 秒後清除成功訊息
           setTimeout(() => {
-            fetch('http://localhost:8000/shutdown').catch(() => {
-              // fetch 在後端關閉時必定會拋出網路錯誤(因為伺服器瞬間消失了)
-              // 這是正常的，所以我們用 catch 把它忽略掉
-            });
-          }, 1000); // 延遲 1 秒讓使用者看清楚「儲存成功」的訊息
+              statusText.textContent = "";
+          }, 3000);
 
         } else {
           throw new Error(result.error);
@@ -274,6 +325,12 @@
       } catch (err) {
         statusText.textContent = "❌ 儲存失敗：" + err.message;
         statusText.style.color = "red";
+      }
+    });
+    // 👇 [新增] 點擊退出按鈕時，通知主進程關閉程式
+    document.getElementById('exitBtn').addEventListener('click', () => {
+      if (confirm('確定要完全退出桌寵與背景服務嗎？')) {
+        ipcRenderer.send('quit-app');
       }
     });
   </script>

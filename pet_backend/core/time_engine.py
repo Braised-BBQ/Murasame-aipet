@@ -2,6 +2,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, Callable, Optional, Awaitable
 import apscheduler.schedulers.asyncio  # type: ignore
+import random
+
+from core.config_manager import config_manager
 
 class TimeEngine:
     def __init__(
@@ -20,6 +23,13 @@ class TimeEngine:
 
         # 🌟 啟動時自動還原排程，並處理錯過的今日事件
         self._reload_reminders_on_startup()
+        # 🌟 新增這段：每 30 分鐘執行一次隨機事件檢查
+        self.scheduler.add_job(
+            self._trigger_random_event,
+            trigger='interval',
+            minutes=30,
+            id="random_event_loop"
+        )
 
     def get_time_context(self) -> str:
         now = datetime.now()
@@ -126,6 +136,84 @@ class TimeEngine:
                 id=doc_id
             )
             print(f"⏰ [系統排程設定] 將於 {target_dt.strftime('%Y-%m-%d %H:%M:%S')} 觸發提醒。")
+    async def _trigger_random_event(self) -> None:
+        # 1. 檢查勿擾模式 (透過 ConfigManager 即時讀取)
+        if config_manager.get("do_not_disturb", False):
+            return  # 若開啟勿擾，則安靜退出
+
+        # 2. 觸發機率 (例如 15%)
+        if random.random() > 0.15:
+            return
+
+        # 3. 豐富的事件庫設計
+        now = datetime.now()
+        hour = now.hour
+        
+        events_pool: list[str] = []
+
+        # --- 根據時間段加入特定的事件 ---
+        if 6 <= hour < 11:
+            events_pool.extend([
+                "你剛在神社看到芳乃在練習神樂舞，覺得很優雅，想跟主人分享。",
+                "你覺得今天的晨風很舒服，心情很好，主動跟主人道早安並討摸摸。",
+                "你看到蕾娜精神百倍地跑過去，感嘆外國人的活力真好。",
+                "今天早上芳乃在練舞，你興致勃勃地邀請主人一起去看芳乃練舞。",
+                "今天你想幫安晴神主分擔一下神社的事務，於是拉主人幫安晴掃神社的地。"
+            ])
+        elif 11 <= hour < 14:
+            events_pool.extend([
+                "午餐時間到了，你好奇主人今天吃什麼，並順便炫耀一下自己想吃甜點。",
+                "午餐時間到了，你邀請主人一起享用茉子為你們做的便當，並誇讚茉子的手藝一如既往地好。",
+                "午餐時間到了，你邀請主人一起去後山，兩人獨自享用便當。",
+                "你有點犯睏，打了個可愛的哈欠，問主人要不要一起午休。"
+            ])
+        elif 14 <= hour < 18:
+            events_pool.extend([
+                "你剛才偷偷跑去鎮上的甜點店找小春，吃到了非常好吃的抹茶糰子，現在心情很好，並問主人要不要也吃一口。",
+                "你看到茉子在進行忍者的修行，覺得很有趣，跑來跟主人轉述。",
+                "你剛剛看到玄十郎在練劍道，並跑來跟主人感嘆他老當益壯，身手不減當年。",
+                "你跟主人一起去幫茉子採購食材，並跟主人談論今天的晚餐要做甚麼。",
+                "你想去後山走走，並邀請主人去河邊玩水。",
+                "你心血來潮，一起邀請主人去甜點店田心屋吃甜點。"
+            ])
+        elif 18 <= hour < 23:
+            events_pool.extend([
+                "你剛剛寫完學校的功課，覺得有點累，想要主人摸摸頭誇獎你。",
+                "夜深了，你有點害怕幽靈，故意找藉口想多跟主人說說話以確認主人的存在。",
+                "你剛洗完澡，身上香香的，心情愉悅地來找主人閒聊。",
+                "今天天氣正好，你邀請主人和你一起去散步和賞月。"
+            ])
+        else: # 凌晨 23:00 ~ 06:00
+            events_pool.extend([
+                "你發現主人這麼晚還醒著，用稍微有點責備但又心疼的語氣提醒主人該休息了。",
+                "半夜周圍太安靜了，你有點怕黑，小聲地呼喚主人確認他還在。"
+            ])
+
+        # --- 加入無關時間的通用隨機事件 (增加變化) ---
+        events_pool.extend([
+            "你突然覺得很無聊，決定發起一個沒有意義的話題來引起主人的注意。",
+            "你盯著主人看了一陣子，突然有些害羞，傲嬌地說「本座才沒有一直在看你呢」。",
+            "你突然想起了甜點的味道，但現在沒辦法去甜點店田心屋，跟主人說想吃甜點。",
+            "你回憶起這五百年間的某件小事（由你自由發揮），想要跟主人分享你的過去。"
+        ])
+
+        # 4. 隨機抽出一個情境
+        event_scenario = random.choice(events_pool)
+        # 5. 組合 Secret Prompt
+        secret_prompt = f"""
+        【系統內部觸發任務 - 隨機日常事件】
+        請你決定是否「主動」開口跟主人搭話。
+        情境設定：{event_scenario}
+        
+        重要指示：
+        1. 如果你覺得剛剛才和主人講過話、或這個情境不適合現在開口，你可以選擇拒絕發言（回傳 action_code 為 0）。
+        2. 如果決定發言，請用 1~3 句話自然表達，絕對不要提及這是系統觸發的或是「情境設定」這幾個字。
+        3. 表現出叢雨的語氣，依照情境自然地展現開心、撒嬌、傲嬌或疲倦等情緒。
+        """
+
+        # 6. 呼叫大腦回呼函數
+        await self.brain_api_callback(secret_prompt)
+        print(f"\n🎲 [隨機事件已觸發] 抽選情境: {event_scenario}\n")
 
     # 🌟 修改此函數：加入 doc_id 與 meta，提醒完自動標記為已完成
     async def _trigger_natural_reminder(self, fact: str, doc_id: str, meta: Dict[str, Any]) -> None:

@@ -1,6 +1,7 @@
 @echo off
-:: 設定字元集為 UTF-8，避免中文亂碼
 chcp 65001 >nul
+:: 強制將執行路徑鎖定在 bat 檔所在的資料夾
+cd /d "%~dp0"
 
 echo =========================================
 echo 開始配置專案環境與設定
@@ -8,12 +9,7 @@ echo =========================================
 
 echo.
 echo [1/4] 檢查並建立基礎設定檔 (config.json)...
-
 if not exist "pet_backend" mkdir "pet_backend"
-
-:: 設定一個變數用來記錄是否為第一次啟動
-set FIRST_RUN=0
-
 if not exist "pet_backend\config.json" (
     echo 找不到 config.json，正在為您自動建立預設設定...
     (
@@ -22,7 +18,11 @@ if not exist "pet_backend\config.json" (
         echo     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         echo     "model": "gemini-3.6-flash",
         echo     "sub_model": "gemini-3.1-flash-lite",
+        echo     "tts_mode": "autodl",
+        echo     "tts_engine_root": "GPT-SoVITS",
+        echo     "tts_model_dir": "Murasame_SoVITS",
         echo     "weather_location": "Taipei",
+        echo     "model_scale": 1.0,
         echo     "autodl": {
         echo         "login_command": "",
         echo         "password": "",
@@ -36,28 +36,48 @@ if not exist "pet_backend\config.json" (
         echo     "show_terminal": false
         echo }
     ) > "pet_backend\config.json"
-    echo 設定檔建立完成。
     set FIRST_RUN=1
-) else (
-    echo config.json 已存在，略過建立。
 )
 
 echo.
 echo [2/4] 檢查 Python 虛擬環境...
-if not exist venv\Scripts\activate.bat (
-    python -m venv venv
-    echo 虛擬環境建立完成。
+if not exist "venv\Scripts\activate.bat" (
+    echo 正在尋找可用的 Python 指令並建立虛擬環境...
+    
+    :: 嘗試 1：使用 py (防禦 msys64 污染的最佳解)
+    py -m venv venv >nul 2>&1
+    
+    :: 嘗試 2：如果 py 失敗，改用標準 python
+    if not exist "venv\Scripts\activate.bat" (
+        python -m venv venv >nul 2>&1
+    )
+    
+    :: 嘗試 3：如果 python 也失敗，嘗試 python3 (某些環境的預設)
+    if not exist "venv\Scripts\activate.bat" (
+        python3 -m venv venv >nul 2>&1
+    )
+    
+    :: 最終檢查
+    if not exist "venv\Scripts\activate.bat" (
+        echo [錯誤] 建立失敗！請確認這台電腦是否已安裝 Python，並且在安裝時有勾選 "Add Python to PATH"。
+        pause
+        exit /b
+    ) else (
+        echo 虛擬環境建立完成。
+    )
 ) else (
-    echo 虛擬環境已存在。
+    echo 虛擬環境已存在，略過建立。
 )
 
+:: 啟動虛擬環境
 call "venv\Scripts\activate.bat"
 
 echo.
 echo [3/4] 安裝 Python 依賴套件...
-python -m pip install --upgrade pip
+:: 👇 [關鍵修正 2] 絕對路徑呼叫 venv 內的 python.exe，無視全域變數干擾
+"venv\Scripts\python.exe" -m pip install --upgrade pip
 if exist requirements.txt (
-    pip install -r requirements.txt
+    "venv\Scripts\python.exe" -m pip install -r requirements.txt
 ) else (
     echo [警告] 找不到 requirements.txt
 )
@@ -72,20 +92,5 @@ if exist package.json (
 
 echo.
 echo =========================================
-echo 環境安裝完成！正在啟動應用程式...
+echo 環境安裝完成！請嘗試透過test_start.bat啟動
 echo =========================================
-
-:: 根據是否為第一次啟動，決定是否加上 --show-settings 參數
-if exist package.json (
-    if %FIRST_RUN%==1 (
-        start npm start -- --show-settings
-    ) else (
-        start npm start
-    )
-)
-
-<<<<<<< HEAD
-pause
-=======
-pause
->>>>>>> 8f07de200529ad04dceb25111b477f9ac8415b2e

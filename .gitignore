@@ -2,3 +2,5 @@ node_modules/
 __pycache__/
 pet_backend/config.json
 pet_backend/logs/
+venv/
+pet_backend/chroma_db/

@@ -94,7 +94,15 @@ function startFrontend() {
 
   frontendProcess.on('exit', (code) => {
     if (!isBackendRestarting) {
-      console.log(`[Launcher] 前端已關閉 (Code: ${code})`);
+      console.log(`[Launcher] 前端已手動關閉 (Code: ${code})，正在安全結束後端與整個系統...`);
+      // 先用 taskkill 把 Python 後端與它的子進程全部砍掉
+      if (backendProcess) {
+        spawn('taskkill', ['/pid', backendProcess.pid, '/f', '/t'], { shell: true });
+      }
+      // 等待 1 秒確保清理完畢後，結束 launch.js 自身
+      setTimeout(() => {
+        process.exit(0);
+      }, 1000);
     }
   });
 }
