@@ -282,7 +282,7 @@ async function init() {
           // 產生自然的節奏波浪 (0 ~ 1)
           const baseWave = (Math.sin(talkTime) + 1) / 2; 
           
-          // 將音量轉換為 0 ~ 1 的比例 (假設最大音量約為 150)
+          // 將音量轉換為 0 ~ 1 的比例 
           const volumeRatio = Math.min(1, avgVolume / 60); 
           
           // 💡 終極魔法：60% 靠音量決定嘴巴張多大，40% 靠數學波浪模擬嘴唇的碎動
@@ -339,3 +339,37 @@ chatInput.addEventListener('blur', () => {
 });
 
 init();
+
+// ==========================================
+// --- 8. 熱修改：動態調整模型縮放 ---
+// ==========================================
+ipcRenderer.on('scale-model', (event, scale) => {
+  const baseWidth = 400;
+  const baseHeight = 750;
+  const newWidth = Math.round(baseWidth * scale);
+  const newHeight = Math.round(baseHeight * scale);
+
+  // ✅ 修正：只在大小真的改變時，才重設 PIXI 畫布
+  if (typeof app !== 'undefined' && app.renderer) {
+    if (app.renderer.width !== newWidth || app.renderer.height !== newHeight) {
+      app.renderer.resize(newWidth, newHeight);
+    }
+  }
+
+  if (typeof model !== 'undefined') {
+    const baseModelScale = 0.2; 
+    model.scale.set(baseModelScale * scale);
+
+    model.x = newWidth / 2 - model.width / 2;
+    // ⚠️ 注意：如果你在上面的 init() 函式中，覺得模型太低而把 +50 改成了其他數字 (例如 0)，
+    // 這裡的數字請務必改成跟 init() 裡面一模一樣！
+    model.y = newHeight / 2 - model.height / 2 + 50; 
+  }
+
+  const chatContainer = document.getElementById('chat-container');
+  if (chatContainer) {
+    chatContainer.style.transform = `scale(${scale})`;
+    // ✅ 修正：因為你在 index.html 用了 bottom: 65% 來定位，這裡要改為 bottom left 基準
+    chatContainer.style.transformOrigin = 'bottom left'; 
+  }
+});

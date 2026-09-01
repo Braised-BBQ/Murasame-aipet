@@ -11,10 +11,23 @@ let tray = null; // 👈 [新增] 托盤的變數
 const configPath = path.join(__dirname, 'pet_backend/config.json');
 
 function createWindow() {
-  // ... (保留你原有的 createWindow 邏輯，完全不動)
+  // 1. 先讀取設定檔抓取縮放比例
+  let scale = 1.0;
+  try {
+    const configData = fs.readFileSync(configPath, 'utf-8');
+    const config = JSON.parse(configData);
+    if (config.model_scale) scale = config.model_scale;
+  } catch (error) {
+    console.error("讀取設定檔失敗，使用預設大小", error);
+  }
+
+  // 2. 動態計算寬高 (基準寬 400, 高 750)
+  const baseWidth = 400;
+  const baseHeight = 750;
+
   win = new BrowserWindow({
-    width: 400,
-    height: 500,
+    width: Math.round(baseWidth * scale),
+    height: Math.round(baseHeight * scale),
     icon: path.join(__dirname, 'assets/icon.ico'),
     transparent: true,
     frame: false,
@@ -31,7 +44,7 @@ function createWindow() {
   });
 
   win.loadFile('index.html');
-  win.setAlwaysOnTop(true, 'pop-up-menu');
+  win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   try {
     const configData = fs.readFileSync(configPath, 'utf-8');
@@ -160,6 +173,33 @@ ipcMain.handle('save-config', async (event, newConfig) => {
   }
 });
 // ==========================================
+// --- [新增] IPC：熱修改套用 UI 設定 ---
+// ==========================================
+ipcMain.on('apply-ui-settings', () => {
+  try {
+    const configData = fs.readFileSync(configPath, 'utf-8');
+    const config = JSON.parse(configData);
+    const scale = config.model_scale || 1.0;
+    
+    if (win && !win.isDestroyed()) {
+      const baseWidth = 400;
+      const baseHeight = 750;
+      const newWidth = Math.round(baseWidth * scale);
+      const newHeight = Math.round(baseHeight * scale);
+      
+      // ✅ 修正：只有當視窗大小真的需要改變時，才執行 setContentSize
+      const currentSize = win.getContentSize();
+      if (currentSize[0] !== newWidth || currentSize[1] !== newHeight) {
+        win.setContentSize(newWidth, newHeight);
+      }
+      
+      win.webContents.send('scale-model', scale);
+    }
+  } catch (error) {
+    console.error('套用 UI 設定失敗:', error);
+  }
+});
+// ==========================================
 // --- [新增] IPC：完全退出桌寵 ---
 // ==========================================
 ipcMain.on('quit-app', () => {
@@ -171,7 +211,7 @@ ipcMain.on('quit-app', () => {
 // ==========================================
 let dragInterval = null;
 let startMouse = { x: 0, y: 0 };
-let startWindowBounds = { x: 0, y: 0, width: 400, height: 500 };
+let startWindowBounds = { x: 0, y: 0, width: 0, height: 0 };
 
 ipcMain.on('start-right-drag', () => {
   if (!win) return;
