@@ -37,11 +37,12 @@
     │   └── backend.log
     └── core/                  # 中轉層核心功能模組
         ├── autodl_tts.py      # AutoDL SSH 隧道連線與 TTS 請求管理
+        ├── tts_manager.py     # tts服務管理
         ├── brain.py           # LLM 對話大腦、Prompt 組合與主動發言邏輯
         ├── gcal_helper.py     # Google Calendar API 連線與行程同步
         ├── memory.py          # 對話記憶與上下文歷史紀錄管理
         ├── time_engine.py     # 時間排程引擎與主動推播觸發器
-        ├──config_manager.py   # 熱修改檔案處理
+        ├── config_manager.py  # 熱修改檔案處理
         └── vision.py          # 螢幕截圖、MSE 差異比對與視覺解析
 ```
 
