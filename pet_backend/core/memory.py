@@ -86,13 +86,15 @@ class MemoryManager:
                         2. 當下情緒、閒聊、打招呼（例：「今天好累」、「早安」、「哈哈」）。
                         3. 當下操作指令（例：「幫我寫程式」、「講個笑話」、「查詢天氣」）。
             
-                        請嚴格只回傳 JSON 格式字串，格式如下：
+                        請嚴格只回傳 JSON 格式字串（不要有 Markdown 標記，如 ```json），格式如下：
                         {{
-                          "has_event": true 或 false,
-                          "fact": "若是 true，請濃縮成一句客觀、精煉的事實句（如：主人不吃香菜）；若是 false，請填 null",
-                          "event_time": "YYYY-MM-DD HH:MM:SS" (若是全天事件如生日、紀念日，請預設填寫該日的 06:00:00。若是未來具體時間，請精準換算。若無明確時間或為常態習慣則填 null),
-                          "is_future_reminder": true 或 false (只有在需要未來特定時間點主動提醒時，才設為 true),
-                          "is_yearly": true 或 false (如果這是每年固定發生的日子，例如生日、紀念日、節日，請設為 true)
+                        "has_event": true 或 false,
+                        "fact": "若是 true，請濃縮成一句客觀、精煉的事實句（如：主人不吃香菜）；若是 false，請填 null",
+                        
+                        "event_time": "YYYY-MM-DD HH:MM:SS" (⚠️ 極度重要：這是『系統要觸發提醒的鬧鐘時間』，而非事件開始時間！若使用者說「中午提醒我下午3點開會」，這裡必須精算並填寫 12:00:00。若是全天事件如生日，請預設填寫該日的 06:00:00。若是未來具體時間，請精準換算。若無明確時間或為常態習慣則填 null),
+                        
+                        "is_future_reminder": true 或 false(只有在需要未來特定時間點主動提醒時，才設為 true),
+                        "is_yearly": true 或 false(如果這是每年固定發生的日子，例如生日、紀念日、節日，請設為 true)
                         }}
                         """
             
