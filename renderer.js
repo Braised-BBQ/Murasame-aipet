@@ -236,9 +236,10 @@ async function init() {
   const { Live2DModel } = PIXI.live2d;
   
   model = await Live2DModel.from(modelUrl); 
-  model.scale.set(0.2); 
-  model.x = app.screen.width / 2 - model.width / 2;
-  model.y = app.screen.height - model.height - 10;
+  ipcRenderer.invoke('get-config').then(config => {
+  const currentScale = (config && config.model_scale) ? config.model_scale : 1.0;
+  applyScale(currentScale);
+  });
   
   app.stage.addChild(model);
   setupInteraction(model);
@@ -367,11 +368,7 @@ function applyScale(scale) {
     model.x = newWidth / 2 - model.width / 2;
     
     // 【新增】Y 軸偏移量 (負數代表往上移，正數代表往下移)
-    // 這裡設定 -80 作為基準，你可以根據腳被切掉的程度改為 -100 或 -50
-    const offsetY = -80; 
-    
-    // 將原本的 - (10 * scale) 換成加上偏移量，這樣放大縮小都會按比例提昇
-    model.y = newHeight - model.height + (offsetY * scale); 
+    model.y = newHeight - model.height - (10 * scale);
   }
 
   // 3. 修正對話框定位，讓基準點距離隨視窗等比例拉高
