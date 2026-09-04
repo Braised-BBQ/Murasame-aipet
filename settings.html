@@ -125,6 +125,11 @@
       <label>子模型 (Sub Model，視覺和記憶模型使用)</label>
       <input type="text" id="sub_model">
     </div>
+    <!-- 👇 [新增] 短期記憶對話數 -->
+    <div class="form-group">
+      <label>短期記憶對話數</label>
+      <input type="number" id="max_history_turns" placeholder="例如: 15">
+    </div>
   </div>
 
   <!-- AutoDL 設定 -->
@@ -190,6 +195,15 @@
       <label>啟用 Google 日曆</label>
       <input type="checkbox" id="enable_google_calendar">
     </div>
+    <!-- 👇 [新增] 隨機事件相關設定 -->
+    <div class="form-group">
+      <label>隨機事件抽籤間隔 (分鐘)</label>
+      <input type="number" id="random_event_interval_minutes" placeholder="例如: 30">
+    </div>
+    <div class="form-group">
+      <label>隨機事件觸發機率 (0~1)</label>
+      <input type="number" step="0.01" min="0" max="1" id="random_event_probability" placeholder="例如: 0.15">
+    </div>
     <div class="form-group">
       <label>勿擾模式 (DND)</label>
       <input type="checkbox" id="do_not_disturb">
@@ -217,12 +231,15 @@
       base_url: document.getElementById('base_url'),
       model: document.getElementById('model'),
       sub_model: document.getElementById('sub_model'),
+      max_history_turns: document.getElementById('max_history_turns'),
       weather_location: document.getElementById('weather_location'),
       autodl_login: document.getElementById('autodl_login'),
       autodl_password: document.getElementById('autodl_password'),
       autodl_remote: document.getElementById('autodl_remote'),
       enable_google_calendar: document.getElementById('enable_google_calendar'),
       gcal_credentials_path: document.getElementById('gcal_credentials_path'),
+      random_event_interval_minutes: document.getElementById('random_event_interval_minutes'), // 👈 [新增]
+      random_event_probability: document.getElementById('random_event_probability'), // 👈 [新增]
       vision_cooldown: document.getElementById('vision_cooldown'),
       vision_mse: document.getElementById('vision_mse'),
       do_not_disturb: document.getElementById('do_not_disturb'),
@@ -255,6 +272,7 @@
       els.base_url.value = config.base_url || ''; // 👈 [新增]
       els.model.value = config.model || '';
       els.sub_model.value = config.sub_model || '';
+      els.max_history_turns.value = config.max_history_turns || 15;
       els.weather_location.value = config.weather_location || '';
       els.tts_mode.value = config.tts_mode || 'autodl'; // 預設為 autodl
       els.tts_engine_root.value = config.tts_engine_root || '';
@@ -267,6 +285,8 @@
 
       els.enable_google_calendar.checked = config.enable_google_calendar || false;
       els.gcal_credentials_path.value = config.gcal_credentials_path || '';
+      els.random_event_interval_minutes.value = config.random_event_interval_minutes || 30; // 👈 [新增]
+      els.random_event_probability.value = config.random_event_probability || 0.15; // 👈 [新增]
       els.vision_cooldown.value = config.vision_cooldown_seconds || 300;
       els.vision_mse.value = config.vision_mse_threshold || 500.0;
       els.do_not_disturb.checked = config.do_not_disturb || false;
@@ -284,6 +304,7 @@
         base_url: els.base_url.value, // 👈 [新增]
         model: els.model.value,
         sub_model: els.sub_model.value,
+        max_history_turns: parseInt(els.max_history_turns.value, 10),
         tts_mode: els.tts_mode.value,
         tts_engine_root: els.tts_engine_root.value,
         tts_model_dir: els.tts_model_dir.value,
@@ -295,6 +316,8 @@
         },
         enable_google_calendar: els.enable_google_calendar.checked,
         gcal_credentials_path: els.gcal_credentials_path.value,
+        random_event_interval_minutes: parseInt(els.random_event_interval_minutes.value, 10),
+        random_event_probability: parseFloat(els.random_event_probability.value),
         vision_cooldown_seconds: parseInt(els.vision_cooldown.value, 10),
         vision_mse_threshold: parseFloat(els.vision_mse.value),
         do_not_disturb: els.do_not_disturb.checked,

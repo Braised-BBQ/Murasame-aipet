@@ -21,9 +21,9 @@ function createWindow() {
     console.error("讀取設定檔失敗，使用預設大小", error);
   }
 
-  // 2. 動態計算寬高 (基準寬 400, 高 750)
+  // 2. 動態計算寬高 (基準寬 400, 高 600)
   const baseWidth = 400;
-  const baseHeight = 750;
+  const baseHeight = 600;
 
   win = new BrowserWindow({
     width: Math.round(baseWidth * scale),
@@ -183,7 +183,7 @@ ipcMain.on('apply-ui-settings', () => {
     
     if (win && !win.isDestroyed()) {
       const baseWidth = 400;
-      const baseHeight = 750;
+      const baseHeight = 600;
       const newWidth = Math.round(baseWidth * scale);
       const newHeight = Math.round(baseHeight * scale);
       
@@ -211,13 +211,27 @@ ipcMain.on('quit-app', () => {
 // ==========================================
 let dragInterval = null;
 let startMouse = { x: 0, y: 0 };
-let startWindowBounds = { x: 0, y: 0, width: 0, height: 0 };
+let startWindowPos = { x: 0, y: 0 };
 
 ipcMain.on('start-right-drag', () => {
   if (!win) return;
-  startMouse = screen.getCursorScreenPoint();
-  startWindowBounds = win.getBounds(); 
   
+  startMouse = screen.getCursorScreenPoint();
+  // 1. 改用 getPosition，只取純座標，不取會誤差的 Bounds
+  const [startX, startY] = win.getPosition(); 
+  startWindowPos = { x: startX, y: startY };
+  
+  // 2. 每次拖曳前，抓取絕對精準的縮放比例，計算出「不可變動的真實寬高」
+  let scale = 1.0;
+  try {
+    const configData = fs.readFileSync(configPath, 'utf-8');
+    const config = JSON.parse(configData);
+    if (config.model_scale) scale = config.model_scale;
+  } catch (error) {}
+
+  const exactWidth = Math.round(400 * scale);
+  const exactHeight = Math.round(600 * scale); // 確保對齊 600 的高度標準
+
   if (dragInterval) clearInterval(dragInterval);
   
   dragInterval = setInterval(() => {
@@ -225,15 +239,17 @@ ipcMain.on('start-right-drag', () => {
       clearInterval(dragInterval);
       return;
     }
+    
     const currentMouse = screen.getCursorScreenPoint();
     const deltaX = currentMouse.x - startMouse.x;
     const deltaY = currentMouse.y - startMouse.y;
     
+    // 3. 每次移動都「強制」把正確的長寬塞回去，徹底抹殺自動擴張 Bug
     win.setBounds({
-      x: startWindowBounds.x + deltaX,
-      y: startWindowBounds.y + deltaY,
-      width: startWindowBounds.width,   
-      height: startWindowBounds.height  
+      x: Math.round(startWindowPos.x + deltaX),
+      y: Math.round(startWindowPos.y + deltaY),
+      width: exactWidth,
+      height: exactHeight
     });
   }, 15); 
 });

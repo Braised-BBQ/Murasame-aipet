@@ -10,7 +10,8 @@ const app = new PIXI.Application({
   view: document.createElement('canvas'),
   backgroundAlpha: 0,
   autoStart: true,
-  resizeTo: window,
+  width: 400,              // ✅ 補上預設寬度
+  height: 600,             // ✅ 補上預設高度 (與熱修改基準對齊)
   resolution: window.devicePixelRatio || 1,
   autoDensity: true
 });
@@ -237,7 +238,7 @@ async function init() {
   model = await Live2DModel.from(modelUrl); 
   model.scale.set(0.2); 
   model.x = app.screen.width / 2 - model.width / 2;
-  model.y = app.screen.height / 2 - model.height / 2 + 50; 
+  model.y = app.screen.height - model.height - 10;
   
   app.stage.addChild(model);
   setupInteraction(model);
@@ -341,35 +342,60 @@ chatInput.addEventListener('blur', () => {
 init();
 
 // ==========================================
-// --- 8. 熱修改：動態調整模型縮放 ---
+// --- 8. 熱修改：動態調整模型與介面縮放 ---
 // ==========================================
-ipcRenderer.on('scale-model', (event, scale) => {
+
+// 建立一個獨立的縮放函數，讓開機與熱修改都能共用
+function applyScale(scale) {
   const baseWidth = 400;
-  const baseHeight = 750;
+  const baseHeight = 600;
   const newWidth = Math.round(baseWidth * scale);
   const newHeight = Math.round(baseHeight * scale);
 
-  // ✅ 修正：只在大小真的改變時，才重設 PIXI 畫布
+  // 1. 同步放大 PIXI 畫布，解決高倍數下模型被切斷的問題
   if (typeof app !== 'undefined' && app.renderer) {
     if (app.renderer.width !== newWidth || app.renderer.height !== newHeight) {
       app.renderer.resize(newWidth, newHeight);
     }
   }
 
+  // 2. 修正模型縮放與定位
   if (typeof model !== 'undefined') {
     const baseModelScale = 0.2; 
     model.scale.set(baseModelScale * scale);
 
     model.x = newWidth / 2 - model.width / 2;
-    // ⚠️ 注意：如果你在上面的 init() 函式中，覺得模型太低而把 +50 改成了其他數字 (例如 0)，
-    // 這裡的數字請務必改成跟 init() 裡面一模一樣！
-    model.y = newHeight / 2 - model.height / 2 + 50; 
+    
+    // 【新增】Y 軸偏移量 (負數代表往上移，正數代表往下移)
+    // 這裡設定 -80 作為基準，你可以根據腳被切掉的程度改為 -100 或 -50
+    const offsetY = -80; 
+    
+    // 將原本的 - (10 * scale) 換成加上偏移量，這樣放大縮小都會按比例提昇
+    model.y = newHeight - model.height + (offsetY * scale); 
   }
 
+  // 3. 修正對話框定位，讓基準點距離隨視窗等比例拉高
   const chatContainer = document.getElementById('chat-container');
   if (chatContainer) {
     chatContainer.style.transform = `scale(${scale})`;
-    // ✅ 修正：因為你在 index.html 用了 bottom: 65% 來定位，這裡要改為 bottom left 基準
     chatContainer.style.transformOrigin = 'bottom left'; 
+    
+    // 讓距離底部的像素也乘上倍數，就能完美咬合在角色的相同部位
+    const baseBottom = 380; 
+    const baseLeft = 10;
+    chatContainer.style.bottom = `${baseBottom * scale}px`;
+    chatContainer.style.left = `${baseLeft * scale}px`;
+  }
+}
+
+// 監聽來自設定視窗的熱修改
+ipcRenderer.on('scale-model', (event, scale) => {
+  applyScale(scale);
+});
+
+// 啟動時主動向主進程索取設定檔，確保一開機的縮放與定位就是正確的
+ipcRenderer.invoke('get-config').then(config => {
+  if (config && config.model_scale) {
+    applyScale(config.model_scale);
   }
 });

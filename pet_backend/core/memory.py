@@ -12,17 +12,22 @@ from .config_manager import config_manager
 class MemoryManager:
     def __init__(self, max_history: int = 10):
         self.history: list[dict[str, Any]] = []
-        self.max_history = max_history
-
         db_path = os.path.join(os.path.dirname(__file__), "../chroma_db")
         self.chroma_client = chromadb.PersistentClient(path=db_path)
         self.collection = self.chroma_client.get_or_create_collection(name="murasame_memory")
 
     # ... (add_message, get_messages, clear, add_long_term_memory, search_long_term_memory 維持原樣) ...
     def add_message(self, role: str, content: str):
+        # 1. 存入對話
         self.history.append({"role": role, "parts": [content]})
-        if len(self.history) > self.max_history:
-            self.history.pop(0)
+        
+        # 2. 動態讀取最新的對話上限 (預設 10 輪)
+        # 乘以 2 是因為一問一答算 2 筆紀錄
+        max_turns = int(config_manager.get("max_history_turns", 10)) * 2
+        
+        # 3. 使用切片精準保留最後 max_turns 筆紀錄，完美支援熱修改縮小上限
+        if len(self.history) > max_turns:
+            self.history = self.history[-max_turns:]
 
     def get_messages(self) -> list[dict[str, Any]]:
         return self.history

@@ -83,11 +83,15 @@ async def proactive_trigger_callback(secret_prompt: str):
     # 🌟 檢查大腦是否行使了拒絕權 (action_code 為 0 或 messages 為空)
     if llm_result.get("action_code") == 0 or not llm_result.get("messages"):
         logger.info("🧠 [主動發言] 大腦選擇保持安靜（拒絕發言）。")
-        return
+        return "" # 👈 回傳空字串代表沒說話
 
     if llm_result.get("action_code") == 1 and manager.active_connections:
         messages = llm_result.get("messages", [])
+        
+        full_spoken_text = "" # 👈 新增：用來把分段的句子接起來
+        
         for msg in messages:
+            full_spoken_text += msg.get("reply_zh", "") # 👈 收集台詞
             text_to_speak = msg.get("reply_jp", "")
             local_mp3_path, audio_url = "", ""
             
@@ -112,7 +116,9 @@ async def proactive_trigger_callback(secret_prompt: str):
             logger.info(f"📤 [主動推播完成]: {payload['reply_zh']}")
             sleep_time = get_audio_duration(local_mp3_path) + 0.5
             await asyncio.sleep(sleep_time)
-
+            return full_spoken_text # 👈 將真正說出口的話回傳給時間引擎
+        
+    return ""
 async def screen_monitor_loop():
     """背景視覺監控迴圈"""
     global last_vision_trigger_time
@@ -247,7 +253,8 @@ app.mount("/audio", StaticFiles(directory=AUDIO_DIR), name="audio")
 async def reload_settings():
     logger.info("🔄 收到前端設定更改，正在重新載入設定檔 (熱修改)...")
     config_manager.load()
-    
+    if time_engine is not None:
+        time_engine.update_random_event_interval()
     try:
         tts_manager.stop() 
         success = await tts_manager.start(config_manager) 
@@ -304,15 +311,70 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # -------------------------------------------------------------------
-# 6.5 天氣模組 (Weather Module)
+# 6.5 天氣模組 (Weather Module) - 3天預報 + 風速 + 嚴格型別註解版
 # -------------------------------------------------------------------
 async def get_weather_async(location: str = "Taipei") -> str:
+    """透過免費 API 取得當前天氣、3天預報、降雨機率與風速資訊"""
     try:
-        api_url = f"https://zh.wttr.in/{location}?format=3"
+        api_url = f"https://wttr.in/{location}?format=j1&lang=zh-tw"
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(api_url)
             if response.status_code == 200:
-                return response.text.strip()
+                data: dict[str, Any] = response.json()
+                
+                # 1. 抓取當下即時氣候與風速
+                current: dict[str, Any] = data['current_condition'][0]
+                desc_list: list[dict[str, Any]] = current.get(
+                    'lang_zh-tw', 
+                    current.get('lang_zh', current.get('weatherDesc', [{'value': '未知'}]))
+                )
+                current_desc: str = str(desc_list[0].get('value', '未知'))
+                current_temp: str = str(current.get('temp_C', '未知'))
+                current_wind_speed: str = str(current.get('windspeedKmph', '0'))
+                current_wind_dir: str = str(current.get('winddir16Point', ''))
+                
+                # 內部輔助函數：補全型別標註，解決 Pylance 警告
+                def calculate_day_stats(hourly_list: list[dict[str, Any]]) -> tuple[int, int]:
+                    max_rain: int = max(int(h.get('chanceofrain', '0')) for h in hourly_list)
+                    max_wind: int = max(int(h.get('windspeedKmph', '0')) for h in hourly_list)
+                    return max_rain, max_wind
+
+                # 2. 抓取未來 3 天資料 (wttr.in 預設回傳 3 天)
+                weather_days: list[dict[str, Any]] = data.get('weather', [])[:3]
+                day_labels: list[str] = ["今天", "明天", "後天"]
+                forecast_lines: list[str] = []
+
+                for idx, day_data in enumerate(weather_days):
+                    label: str = day_labels[idx] if idx < len(day_labels) else f"第 {idx + 1} 天"
+                    date_str: str = str(day_data.get('date', ''))
+                    max_temp: str = str(day_data.get('maxtempC', ''))
+                    min_temp: str = str(day_data.get('mintempC', ''))
+                    
+                    hourly_data: list[dict[str, Any]] = day_data.get('hourly', [])
+                    max_rain, max_wind = calculate_day_stats(hourly_data)
+                    
+                    # 強風提醒邏輯 (陣風/風速大於 30 km/h 時標記)
+                    wind_warning: str = " ⚠️強風" if max_wind >= 30 else ""
+
+                    forecast_lines.append(
+                        f"・{label} ({date_str})：氣溫 {min_temp}°C~{max_temp}°C | "
+                        f"最高降雨 {max_rain}% | 最大風速 {max_wind} km/h{wind_warning}"
+                    )
+
+                # 月相資訊
+                moon_phase: str = "未知"
+                if weather_days and 'astronomy' in weather_days[0]:
+                    moon_phase = str(weather_days[0]['astronomy'][0].get('moon_phase', '未知'))
+
+                # 組合最終給 LLM 的 context 字串
+                weather_summary: str = (
+                    f"目前地點：{location}\n"
+                    f"當下狀態：{current_desc}，氣溫 {current_temp}°C，風向 {current_wind_dir} (風速 {current_wind_speed} km/h)。\n"
+                    f"今晚月相：{moon_phase}\n"
+                    f"【未來三天預報】\n" + "\n".join(forecast_lines)
+                )
+                return weather_summary
+                
             return f"無法取得 {location} 的天氣資訊 (HTTP {response.status_code})。"
     except Exception as e:
         logger.error(f"天氣 API 連線失敗: {e}")
