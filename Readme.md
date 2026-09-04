@@ -35,6 +35,8 @@
     ├── config.json            # 系統 API 金鑰與連線設定檔
     ├── logs/                  # 後端日誌目錄
     │   └── backend.log
+    ├──random_event_log.json   #隨機事件紀錄
+    ├──chroma_db               #長期記憶庫
     └── core/                  # 中轉層核心功能模組
         ├── autodl_tts.py      # AutoDL SSH 隧道連線與 TTS 請求管理
         ├── tts_manager.py     # tts服務管理
