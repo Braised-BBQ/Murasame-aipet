@@ -22,6 +22,7 @@ if not exist "pet_backend\config.json" (
         echo     "tts_engine_root": "GPT-SoVITS",
         echo     "tts_model_dir": "Murasame_SoVITS",
         echo     "max_history_turns": 15,
+        echo     "auto_location": true,
         echo     "weather_location": "Taipei",
         echo     "random_event_interval_minutes": 30,
         echo     "random_event_probability": 0.15,

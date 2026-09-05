@@ -179,6 +179,11 @@
       <label>天氣定位 (Location)</label>
       <input type="text" id="weather_location">
     </div>
+    <!-- 👇 [新增] 自動定位開關 -->
+    <div class="form-group" style="margin-bottom: 15px;">
+      <label>自動更新天氣定位</label>
+      <input type="checkbox" id="auto_location">
+    </div>
     <div class="form-group">
       <label>視覺冷卻時間 (秒)</label>
       <input type="number" id="vision_cooldown">
@@ -186,14 +191,6 @@
     <div class="form-group">
       <label>視覺 MSE 閾值</label>
       <input type="number" step="0.1" id="vision_mse">
-    </div>
-    <div class="form-group">
-      <label>Google 日曆憑證路徑</label>
-      <input type="text" id="gcal_credentials_path">
-    </div>
-    <div class="form-group" style="margin-top: 15px;">
-      <label>啟用 Google 日曆</label>
-      <input type="checkbox" id="enable_google_calendar">
     </div>
     <!-- 👇 [新增] 隨機事件相關設定 -->
     <div class="form-group">
@@ -233,11 +230,10 @@
       sub_model: document.getElementById('sub_model'),
       max_history_turns: document.getElementById('max_history_turns'),
       weather_location: document.getElementById('weather_location'),
+      auto_location: document.getElementById('auto_location'), // 👈 [新增]
       autodl_login: document.getElementById('autodl_login'),
       autodl_password: document.getElementById('autodl_password'),
       autodl_remote: document.getElementById('autodl_remote'),
-      enable_google_calendar: document.getElementById('enable_google_calendar'),
-      gcal_credentials_path: document.getElementById('gcal_credentials_path'),
       random_event_interval_minutes: document.getElementById('random_event_interval_minutes'), // 👈 [新增]
       random_event_probability: document.getElementById('random_event_probability'), // 👈 [新增]
       vision_cooldown: document.getElementById('vision_cooldown'),
@@ -274,6 +270,7 @@
       els.sub_model.value = config.sub_model || '';
       els.max_history_turns.value = config.max_history_turns || 15;
       els.weather_location.value = config.weather_location || '';
+      els.auto_location.checked = config.auto_location || false; // 👈 [新增] 預設為 false
       els.tts_mode.value = config.tts_mode || 'autodl'; // 預設為 autodl
       els.tts_engine_root.value = config.tts_engine_root || '';
       els.tts_model_dir.value = config.tts_model_dir || '';
@@ -282,9 +279,6 @@
         els.autodl_password.value = config.autodl.password || '';
         els.autodl_remote.value = config.autodl.remote_command || '';
       }
-
-      els.enable_google_calendar.checked = config.enable_google_calendar || false;
-      els.gcal_credentials_path.value = config.gcal_credentials_path || '';
       els.random_event_interval_minutes.value = config.random_event_interval_minutes || 30; // 👈 [新增]
       els.random_event_probability.value = config.random_event_probability || 0.15; // 👈 [新增]
       els.vision_cooldown.value = config.vision_cooldown_seconds || 300;
@@ -314,8 +308,7 @@
           password: els.autodl_password.value,
           remote_command: els.autodl_remote.value
         },
-        enable_google_calendar: els.enable_google_calendar.checked,
-        gcal_credentials_path: els.gcal_credentials_path.value,
+        auto_location: els.auto_location.checked, // 👈 [新增]
         random_event_interval_minutes: parseInt(els.random_event_interval_minutes.value, 10),
         random_event_probability: parseFloat(els.random_event_probability.value),
         vision_cooldown_seconds: parseInt(els.vision_cooldown.value, 10),

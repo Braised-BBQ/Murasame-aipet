@@ -9,11 +9,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 from contextlib import asynccontextmanager
-import httpx
 from core.vision import analyze_screen_async
 from core.brain import ask_brain, ask_brain_proactive, memory
 from core.time_engine import TimeEngine
-from core.gcal_helper import GoogleCalendarManager
 from core.vision import capture_screen_image, calculate_image_mse, detect_screen_changes_async, analyze_screen_async
 import time
 from logging.handlers import RotatingFileHandler
@@ -21,6 +19,7 @@ import glob
 from core.config_manager import config_manager
 from core.autodl_tts import AutoDLTTSConnection
 from core.tts_manager import TTSManager  # 引入新的管理器
+from core.weather import get_weather_async
 
 last_vision_trigger_time = time.time()
 # -------------------------------------------------------------------
@@ -176,7 +175,7 @@ async def screen_monitor_loop():
                     f"【系統提示】你正在螢幕邊緣觀察主人。主人的畫面剛剛發生了明顯的變化：\n"
                     f"現在的畫面狀態：{activity}\n"
                     f"變化細節：{change_summary}\n\n"
-                    f"請以叢雨的身份，對此變化發表 1~2 句簡短的評論、吐槽或關心。"
+                    f"請以叢雨的身份，對此變化發表 2~3 句簡短的評論、吐槽或關心。"
                 )
                 
                 await proactive_trigger_callback(secret_prompt)
@@ -214,18 +213,9 @@ async def lifespan(app: FastAPI):
     # ==========================================
     logger.info("🚀 正在啟動 TTS 子系統...")
     await tts_manager.start(config_manager)
-            
-    gcal_manager = None
-    if config_manager.get("enable_google_calendar"):
-        try:
-            gcal_manager = GoogleCalendarManager(config_manager.get("gcal_credentials_path", "credentials.json"))
-            logger.info("✅ Google 日曆掛載成功！")
-        except Exception as e:
-            logger.warning(f"⚠️ Google 日曆掛載失敗: {e}")
 
     time_engine = TimeEngine(
         collection=memory.collection, 
-        gcal_manager=gcal_manager,
         brain_api_callback=proactive_trigger_callback
     )
     logger.info("✅ 時間模組 (TimeEngine) 已啟動！")
@@ -310,75 +300,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# -------------------------------------------------------------------
-# 6.5 天氣模組 (Weather Module) - 3天預報 + 風速 + 嚴格型別註解版
-# -------------------------------------------------------------------
-async def get_weather_async(location: str = "Taipei") -> str:
-    """透過免費 API 取得當前天氣、3天預報、降雨機率與風速資訊"""
-    try:
-        api_url = f"https://wttr.in/{location}?format=j1&lang=zh-tw"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(api_url)
-            if response.status_code == 200:
-                data: dict[str, Any] = response.json()
-                
-                # 1. 抓取當下即時氣候與風速
-                current: dict[str, Any] = data['current_condition'][0]
-                desc_list: list[dict[str, Any]] = current.get(
-                    'lang_zh-tw', 
-                    current.get('lang_zh', current.get('weatherDesc', [{'value': '未知'}]))
-                )
-                current_desc: str = str(desc_list[0].get('value', '未知'))
-                current_temp: str = str(current.get('temp_C', '未知'))
-                current_wind_speed: str = str(current.get('windspeedKmph', '0'))
-                current_wind_dir: str = str(current.get('winddir16Point', ''))
-                
-                # 內部輔助函數：補全型別標註，解決 Pylance 警告
-                def calculate_day_stats(hourly_list: list[dict[str, Any]]) -> tuple[int, int]:
-                    max_rain: int = max(int(h.get('chanceofrain', '0')) for h in hourly_list)
-                    max_wind: int = max(int(h.get('windspeedKmph', '0')) for h in hourly_list)
-                    return max_rain, max_wind
 
-                # 2. 抓取未來 3 天資料 (wttr.in 預設回傳 3 天)
-                weather_days: list[dict[str, Any]] = data.get('weather', [])[:3]
-                day_labels: list[str] = ["今天", "明天", "後天"]
-                forecast_lines: list[str] = []
-
-                for idx, day_data in enumerate(weather_days):
-                    label: str = day_labels[idx] if idx < len(day_labels) else f"第 {idx + 1} 天"
-                    date_str: str = str(day_data.get('date', ''))
-                    max_temp: str = str(day_data.get('maxtempC', ''))
-                    min_temp: str = str(day_data.get('mintempC', ''))
-                    
-                    hourly_data: list[dict[str, Any]] = day_data.get('hourly', [])
-                    max_rain, max_wind = calculate_day_stats(hourly_data)
-                    
-                    # 強風提醒邏輯 (陣風/風速大於 30 km/h 時標記)
-                    wind_warning: str = " ⚠️強風" if max_wind >= 30 else ""
-
-                    forecast_lines.append(
-                        f"・{label} ({date_str})：氣溫 {min_temp}°C~{max_temp}°C | "
-                        f"最高降雨 {max_rain}% | 最大風速 {max_wind} km/h{wind_warning}"
-                    )
-
-                # 月相資訊
-                moon_phase: str = "未知"
-                if weather_days and 'astronomy' in weather_days[0]:
-                    moon_phase = str(weather_days[0]['astronomy'][0].get('moon_phase', '未知'))
-
-                # 組合最終給 LLM 的 context 字串
-                weather_summary: str = (
-                    f"目前地點：{location}\n"
-                    f"當下狀態：{current_desc}，氣溫 {current_temp}°C，風向 {current_wind_dir} (風速 {current_wind_speed} km/h)。\n"
-                    f"今晚月相：{moon_phase}\n"
-                    f"【未來三天預報】\n" + "\n".join(forecast_lines)
-                )
-                return weather_summary
-                
-            return f"無法取得 {location} 的天氣資訊 (HTTP {response.status_code})。"
-    except Exception as e:
-        logger.error(f"天氣 API 連線失敗: {e}")
-        return "天氣服務連線失敗，請稍後再試。"
 
 # -------------------------------------------------------------------
 # 7. WebSocket 路由
@@ -424,8 +346,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 if llm_result.get("action_code") == 2:
                     logger.info("🧠 大腦請求調用桌面視覺...")
                     last_vision_trigger_time = time.time()
-                    
-                    # 動態獲取模型
                     v_model = config_manager.get("sub_model", "gpt-4o-mini")
                     screen_description: str = await analyze_screen_async(model_name=v_model)
 
@@ -435,14 +355,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         screen_description=screen_description
                     )
 
+                # 🌟 天氣模組調用簡化：直接呼叫 get_weather_async()
                 if llm_result.get("action_code") == 3:
                     logger.info("🌤️ 大腦請求調用天氣資訊...")
                     
-                    # 動態獲取天氣位置，加入預設城市防錯
-                    target_location = config_manager.get("weather_location", "Jiali District, Tainan City, Taiwan")
-                    weather_info: str = await get_weather_async(target_location)
-                    logger.info(f"🌤️ 取得 {target_location} 天氣結果: {weather_info}")
+                    weather_info: str = await get_weather_async()
+                    logger.info(f"🌤️ 取得天氣結果:\n{weather_info}")
 
+                    # 將包含「當前數據 + 未來 3 天預報」的天氣資料傳回大腦
                     llm_result = await ask_brain(
                         user_input, 
                         time_engine=time_engine, 

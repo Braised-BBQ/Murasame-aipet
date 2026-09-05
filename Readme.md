@@ -39,10 +39,10 @@
         ├── autodl_tts.py      # AutoDL SSH 隧道連線與 TTS 請求管理
         ├── tts_manager.py     # tts服務管理
         ├── brain.py           # LLM 對話大腦、Prompt 組合與主動發言邏輯
-        ├── gcal_helper.py     # Google Calendar API 連線與行程同步
         ├── memory.py          # 對話記憶與上下文歷史紀錄管理
         ├── time_engine.py     # 時間排程引擎與主動推播觸發器
         ├── config_manager.py  # 熱修改檔案處理
+        ├── weather.py         # 天氣與定位管理
         └── vision.py          # 螢幕截圖、MSE 差異比對與視覺解析
 ```
 
@@ -90,15 +90,12 @@
 - **摸頭觸發**：將滑鼠移動至角色頭部並滑動，即可觸發摸頭反應。
 - **開啟設定**：點擊系統列右下角的托盤小圖示，即可開啟使用者設定介面。
 
-### 7. Google 日曆掛接（可選，不推薦使用）
-請至 Google Cloud Console 登入帳號並申請 Google Calendar API，取得憑證 JSON 檔並改名為 `credentials.json` 放入 `pet_backend/` 目錄中。預設為關閉狀態，若不使用則無須放置該檔案。
-
-### 8.退出
+### 7.退出
 - 退出時請從托盤內退出，若只關掉當下視窗後端並不會關閉。
 - 也可以選擇關掉終端機(以test_start.bat開啟的話)。
 - 若只關掉前端的話，後端會一直執行，此時可以再啟動一遍，啟動器會殺掉舊進程，新的再用托盤關閉即可。
 
-### 9.更新
+### 8.更新
 - 更新程式時，可以選擇保留config.json和chroma_db資料夾，更新程式後把舊的兩個檔案放回原處即可。
 - chroma_db為長期記憶庫，如若不想讓桌寵忘記你，建議保留。
 

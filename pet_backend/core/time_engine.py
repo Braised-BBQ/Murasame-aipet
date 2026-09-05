@@ -3,9 +3,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Callable, Optional, Awaitable
 import apscheduler.schedulers.asyncio  # type: ignore
 import random
-import httpx
 import json # 👈 確認有 import json
 import os   # 👈 確認有 import os
+from core.weather import get_weather_async
 
 from core.config_manager import config_manager
 
@@ -13,11 +13,9 @@ class TimeEngine:
     def __init__(
         self, 
         collection: Any, 
-        gcal_manager: Any | None, 
         brain_api_callback: Callable[[str], Awaitable[Dict[str, Any]]] | Any
     ):
         self.collection = collection
-        self.gcal_manager = gcal_manager
         self.brain_api_callback = brain_api_callback
         
         # 加上 : Any，Pylance 就不會再管 add_job 的型別了
@@ -109,8 +107,6 @@ class TimeEngine:
         return f"{now.strftime('%Y年%m月%d日 %H:%M')} ({weekdays[now.weekday()]})"
     def get_todays_schedule(self) -> str:
         """獲取使用者的今日行程"""
-        if self.gcal_manager:
-            return self.gcal_manager.get_todays_events()
         return ""
     def _reload_reminders_on_startup(self) -> None:
         """軟體啟動時，將資料庫中的排程重新載入，並處理錯過的全天/今日事件"""
@@ -194,11 +190,6 @@ class TimeEngine:
         print(f"✅ [長期記憶儲存] {fact} (時間: {time_str})")
 
         if is_future and target_dt and target_dt > datetime.now():
-            if self.gcal_manager:
-                try:
-                    self.gcal_manager.add_event(summary=fact, start_time=target_dt)
-                except Exception as e:
-                    print(f"⚠️ [日曆同步失敗]: {e}")
 
             self.scheduler.add_job(
                 self._trigger_natural_reminder,
@@ -218,30 +209,8 @@ class TimeEngine:
         if random.random() > trigger_prob:
             return
 
-       # 3. 取得當下詳細天氣與月相資訊 (加強版防呆)
-        weather_info = "未知"
-        moon_phase = "未知"
-        try:
-            target_location = config_manager.get("weather_location", "Taipei")
-            api_url = f"https://wttr.in/{target_location}?format=j1&lang=zh-tw"
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(api_url)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    
-                    # 安全地層層讀取欄位
-                    current = data.get('current_condition', [{}])[0]
-                    desc_list = current.get('lang_zh-tw', current.get('lang_zh', [{'value': '未知'}]))
-                    current_desc = desc_list[0].get('value', '未知') if desc_list else '未知'
-                    current_temp = current.get('temp_C', '未知')
-                    weather_info = f"{current_desc}，氣溫 {current_temp}°C"
-                    
-                    weather_days = data.get('weather', [{}])
-                    if weather_days and 'astronomy' in weather_days[0]:
-                        moon_phase = weather_days[0]['astronomy'][0].get('moon_phase', '未知')
-        except Exception as e:
-            print(f"⚠️ [隨機事件天氣抓取失敗]: {type(e).__name__} - {e}")
-
+       # 🌟 3. 取得超詳細天氣資訊 (直接呼叫我們做好的獨立模組)
+        weather_info = await get_weather_async()
         # 4. 根據時間動態組合【時間限定靈感】 (將原本的事件庫精煉成提示詞)
         now = datetime.now()
         hour = now.hour
@@ -262,8 +231,8 @@ class TimeEngine:
         secret_prompt = f"""
         【系統內部觸發任務 - 動態隨機搭話】
         當前時間：{now.strftime('%H:%M')}
-        當前天氣：{weather_info}
-        今晚月相：{moon_phase}
+        【系統環境數據】
+        {weather_info}
         【近期搭話歷史紀錄】 (這是你今天和昨天已經主動開口聊過的事情)
         {recent_history}
         任務指示：
@@ -278,6 +247,11 @@ class TimeEngine:
           3. 突然想念田心屋甜點的味道。
           4. 回憶起這五百年間的某件小事跟主人分享。
         - 方向 D（關心陪伴）：看到主人一直盯著螢幕（工作、寫作業、玩遊戲），給予關心、提醒休息或鼓勵。
+
+        【天氣數據運用規則 - 非常重要】：
+        1.絕對不要像氣象播報員一樣條列式唸出環境數據或具體數值！
+        2.請將天氣資訊視為「背景條件」，用來輔助你的情境搭話，或據此判斷當下是否適合發言。
+        3.對話的核心必須放在情境本身（如撒嬌、邀約、關心），天氣只是順帶一提的理由。例如：「今天出太陽了，我們去後山散步吧」，而不是「今天氣溫 28 度，降雨機率 0%，適合去散步」。
 
         嚴格要求：
         1. 【絕對不要】在回覆中提及「方向A」、「系統觸發」、「根據情境設定」等破壞沉浸感的詞彙。
