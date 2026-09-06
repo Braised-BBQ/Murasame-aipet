@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import Any
+from typing import Any,Optional
 from core.config_manager import config_manager
 
 logger = logging.getLogger("WeatherModule")
@@ -26,9 +26,16 @@ async def get_current_location_async() -> str:
         
     return default_loc
 
-async def get_weather_async() -> str:
-    """透過免費 API 取得超詳細當前天氣與未來 3 天預報，供大腦自由挑選重點與回答未來趨勢"""
-    location = await get_current_location_async()
+async def get_weather_async(custom_location: Optional[str] = None) -> str:
+    """透過免費 API 取得超詳細當前天氣與未來 3 天預報"""
+    
+    # 🌟 邏輯判斷：如果有指定地點就用指定的，沒有就自動定位本地
+    if custom_location:
+        location = custom_location
+        logger.info(f"🌍 查詢指定地點天氣: {location}")
+    else:
+        location = await get_current_location_async()
+        logger.info(f"📍 查詢本地天氣: {location}")
     
     try:
         api_url = f"https://wttr.in/{location}?format=j1&lang=zh-tw"

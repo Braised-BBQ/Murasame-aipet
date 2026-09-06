@@ -369,7 +369,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 if llm_result.get("action_code") == 3:
                     logger.info("🌤️ 大腦請求調用天氣資訊...")
                     
-                    weather_info: str = await get_weather_async()
+                    # 嘗試從大腦的 JSON 中抓取 "target_location" (如果大腦沒給，就會是 None)
+                    asked_location = llm_result.get("target_location")
+                    
+                    # 將地點傳入天氣模組 (如果是 None，weather.py 會自己切換成本地)
+                    weather_info: str = await get_weather_async(custom_location=asked_location)
                     logger.info(f"🌤️ 取得天氣結果:\n{weather_info}")
 
                     # 將包含「當前數據 + 未來 3 天預報」的天氣資料傳回大腦
