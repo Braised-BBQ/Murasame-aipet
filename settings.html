@@ -184,6 +184,11 @@
       <label>自動更新天氣定位</label>
       <input type="checkbox" id="auto_location">
     </div>
+    <div class="form-group" style="margin-bottom: 15px;">
+      <label>當前系統定位</label>
+      <span id="realtime_location" style="font-weight: bold; color: var(--primary-color);">尚未測試</span>
+      <button id="testLocBtn" type="button" style="margin-left: 15px; padding: 6px 12px; font-size: 13px;">📍 測試即時定位</button>
+    </div>
     <div class="form-group">
       <label>視覺冷卻時間 (秒)</label>
       <input type="number" id="vision_cooldown">
@@ -290,7 +295,28 @@
       els.model_scale.value = savedScale;
       scaleValueText.textContent = parseFloat(savedScale).toFixed(1) + 'x';
     };
-
+    // 測試即時定位的 API 請求
+    document.getElementById('testLocBtn').addEventListener('click', async () => {
+      const locSpan = document.getElementById('realtime_location');
+      locSpan.textContent = "讀取中...";
+      
+      try {
+        // 呼叫後端剛寫好的 API
+        const response = await fetch('http://localhost:8000/api/current_location');
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            locSpan.textContent = data.location;
+        } else {
+            locSpan.textContent = "讀取失敗";
+            locSpan.style.color = "red";
+        }
+      } catch (error) {
+        console.error("無法連接到後端 API", error);
+        locSpan.textContent = "伺服器連線異常";
+        locSpan.style.color = "red";
+      }
+    });
     document.getElementById('saveBtn').addEventListener('click', async () => {
       // 確保將輸入的值轉回正確的型態 (Number, Boolean, String)
       const newConfig = {

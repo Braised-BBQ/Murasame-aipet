@@ -20,6 +20,7 @@ from core.config_manager import config_manager
 from core.autodl_tts import AutoDLTTSConnection
 from core.tts_manager import TTSManager  # 引入新的管理器
 from core.weather import get_weather_async
+from core.weather import get_current_location_async
 
 last_vision_trigger_time = time.time()
 # -------------------------------------------------------------------
@@ -260,7 +261,16 @@ async def reload_settings():
     except Exception as e:
         logger.error(f"⚠️ 熱修改時 TTS 切換失敗: {e}")
         return {"status": "error", "message": f"設定已生效，但 TTS 啟動發生異常: {e}"}
-  
+    
+@app.get("/api/current_location")
+async def get_current_location_api():
+    """提供給前端 settings.html 讀取目前的實際定位"""
+    try:
+        current_loc = await get_current_location_async()
+        return {"status": "success", "location": current_loc}
+    except Exception as e:
+        logger.error(f"前端請求定位失敗: {e}")
+        return {"status": "error", "location": "未知"}
 
 # (原本的 /shutdown 可以保留，作為純粹的關閉程式功能)
 @app.get("/shutdown")
