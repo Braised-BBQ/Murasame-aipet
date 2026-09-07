@@ -109,12 +109,18 @@ async def detect_screen_changes_async(model_name: str, previous_scene_json: str,
         logger.error(f"畫面變化檢測 OpenAI API 失敗: {e}")
         return {"significant_change": False, "error": str(e)}
 
-async def analyze_screen_async(model_name: str) -> str:
+async def analyze_screen_async(model_name: str, focus_instruction: str = "") -> str:
     current_img = await asyncio.to_thread(capture_screen_image)
     if not current_img:
         return "系統提示：無法獲取螢幕截圖。"
 
-    prompt = "請簡短描述這張螢幕截圖中出現了什麼（包含主要視窗、正在進行的活動或重要的文字內容），請忽略有關桌寵的事實，請用繁體中文回答，不需要過度冗長。"
+    # 基礎提示詞
+    prompt = "請簡短描述這張螢幕截圖中出現了什麼，包含主要視窗、正在進行的活動(如音樂撥放器中正在撥放歌曲的具體訊息)或重要的文字內容、畫面中主體的事物例如車的主體型號，請忽略有關桌寵的事實，請用繁體中文回答，不需要過度冗長。"
+    
+    # 如果大腦有傳遞特別指示，則將其附加到提示詞後方強化重點
+    if focus_instruction:
+        prompt += f"\n\n【大腦特別指示】：主人剛剛提到了相關內容，請特別尋找並詳細描述以下重點：「{focus_instruction}」。即使該目標很小，也請盡量辨識。"
+
     base64_image = encode_image_to_base64(current_img)
     
     # --- 動態獲取 API Key 與建立 Client ---

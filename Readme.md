@@ -35,8 +35,9 @@
     ├── config.json            # 系統 API 金鑰與連線設定檔
     ├── logs/                  # 後端日誌目錄
     │   └── backend.log
-    ├──random_event_log.json   #隨機事件紀錄
-    ├──chroma_db               #長期記憶庫
+    ├──random_event_log.json   # 隨機事件紀錄
+    ├──chroma_db               # 長期記憶庫
+    ├──mcp_servers.json        # mcp server設定檔
     └── core/                  # 中轉層核心功能模組
         ├── autodl_tts.py      # AutoDL SSH 隧道連線與 TTS 請求管理
         ├── tts_manager.py     # tts服務管理
@@ -45,6 +46,7 @@
         ├── time_engine.py     # 時間排程引擎與主動推播觸發器
         ├── config_manager.py  # 熱修改檔案處理
         ├── weather.py         # 天氣與定位管理
+        ├── mcp_manager.py     # mcp伺服器管理
         └── vision.py          # 螢幕截圖、MSE 差異比對與視覺解析
 ```
 
@@ -100,6 +102,10 @@
 ### 8.更新
 - 更新程式時，可以選擇保留config.json和chroma_db資料夾，更新程式後把舊的兩個檔案放回原處即可。
 - chroma_db為長期記憶庫，如若不想讓桌寵忘記你，建議保留。
+
+### 9.進階功能
+- 可於設定介面開啟mcp功能，該功能屬進階功能，可能須自行變更程式。
+- 配備了mcp接口，請至mcp config自行設定，設定完成後再依照個別mcp server說明操作。
 
 ## 📡 系統通訊規約 (Data Contract)
 前端與 Python 中轉層透過 WebSocket (`ws://localhost:8000/ws`) 傳輸 JSON 數據：

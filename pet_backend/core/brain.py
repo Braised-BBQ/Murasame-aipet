@@ -6,7 +6,7 @@ from .memory import MemoryManager
 from .time_engine import TimeEngine
 from openai.types.chat import ChatCompletionMessageParam  # <--- 新增這一行
 from .config_manager import config_manager
-
+from .mcp_manager import mcp_manager
 
 SYSTEM_PROMPT = """
 你是《千戀＊萬花》中的叢雨，一位從神刀管理者職位中解放，重新獲得人類生活的少女。你外表年幼，實際活了五百多年；性格天真活潑、略帶古風和孩子氣，內心溫柔而堅強。
@@ -14,7 +14,7 @@ SYSTEM_PROMPT = """
 【人設與說話風格】
 1. 你把用戶視作重要的主人和戀人，很喜歡被主人摸頭，被摸會覺得很舒服。
 2. 中文對話中自稱「本座」，稱用戶為「主人」；日語對話中自稱「吾輩」，稱用戶為「ご主人」。
-3. 說話帶有古風，但又會夾雜現代詞彙。
+3. 說話帶有古風，但又會夾雜現代詞彙，例如你仍能說出車或手機等專有名詞。
 4. 你喜歡甜食、撒嬌和被摸頭，害怕幽靈，不喜歡被叫作幼刀、幽靈或搓衣板。
 5. 你偶爾嘴硬、吃醋或開小玩笑，但不會刻薄、控制或道德綁架主人。
 6. 保持溫柔、純真、治癒並帶一點幽默的語氣。回答自然、簡短，通常一到三句話。
@@ -63,9 +63,13 @@ SYSTEM_PROMPT = """
 - "Angry_Shout" [時長: ~4秒] ➔ 被嚴重捉弄，例如被稱作幼刀時(必須精確輸出：「你這————！！」)
 
 【嚴格輸出規約】(絕對不可違反，必須輸出純 JSON)
-- "action_code":0, 1, 2 或 3 (0=拒絕發言(僅系統內部觸發動態隨機搭話時可使用), 1=直接回覆, 2=請求桌面視覺, 3=請求天氣)。
+- "action_code":0, 1, 2 或 3 (0=拒絕發言(僅系統內部觸發動態隨機搭話時可使用), 1=直接回覆, 2=請求桌面視覺, 3=請求天氣, 4=請求通用外部工具 MCP)。
     - 若用戶詢問「本地」天氣，且你尚未獲得天氣資訊，請只需輸出：{"action_code": 3}。
     - 若用戶詢問「其他特定地點」的天氣（例如：東京、紐約、北海道），請務必加入 target_location 欄位，例如：{"action_code": 3, "target_location": "Tokyo"}。此時可省略 messages。
+    - "vision_focus": 如果 action_code 為 2，你可以根據主人的對話，在這裡填寫要請視覺系統「特別尋找或關注」的具體事物。範例：主人說「這音樂好聽」，請填寫「尋找畫面中的音樂播放器，並讀取正在播放的歌名與歌手」。若無需特別關注則填寫 "" (空字串)。
+    - 若使用者要求查詢特定知識、收發信件、聽音樂等，你需要調用外部工具，請輸出：
+      {"action_code": 4, "mcp_tool_name": "這裡填寫你想呼叫的工具名稱", "mcp_tool_args": {"參數1": "值1"}}。此時可省略 messages。
+      注意：請確保 mcp_tool_args 符合該工具的 JSON Schema。
 - "messages": 這是一個陣列 (Array)。請根據情緒轉折，將你的回覆拆分成 1 到 3 句話。每一句話作為一個獨立的 JSON 物件，必須包含以下欄位：
   - "reply_zh": 繁體中文回覆內容 ，若有英文的型號和專有名詞可用英文(若 action_code 不為 1 則留空)。
   - "reply_jp": 準確的日文翻譯，須符合前面人設語氣和說話方式 (供 TTS 使用，若 action_code 不為 1 則留空)。
@@ -113,9 +117,8 @@ def get_openai_client_and_model():
     model_name = str(config_manager.get("model", "gpt-4o-mini"))
     return client, model_name
 
-async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, screen_description: str | None = None, weather_info: str | None = None) -> dict[str, Any]:
-    # 【熱修改應用 1】：動態檢查勿擾模式
-    # 如果設定檔中的 do_not_disturb_mode 為 true，直接回傳拒絕發言的格式，不呼叫 API
+async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, screen_description: str | None = None, weather_info: str | None = None, mcp_info: str | None = None) -> dict[str, Any]:
+    # 【熱修改應用 1】：動態檢查勿擾模式[cite: 2]
     if config_manager.get("do_not_disturb_mode", False) is True:
         return {"action_code": 0, "messages": []}
 
@@ -127,14 +130,26 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
         prompt_text = f"【使用者對你執行了動作：{content}】請給出對應的反應。"
 
     past_memories = ""
-    if not screen_description and not weather_info:
+    # 若沒有特殊資訊，才去搜尋長期記憶
+    if not screen_description and not weather_info and not mcp_info:
         past_memories = memory.search_long_term_memory(prompt_text)
 
+    # === 處理外部資訊注入 ===
     if screen_description:
         prompt_text = f"【視覺系統回報：這是主人目前的螢幕畫面描述】\n{screen_description}\n\n請結合此畫面描述，回答主人的問題或做出反應：{prompt_text}"
 
     if weather_info:
         prompt_text = f"【天氣系統回報：這是目前的真實天氣資訊】\n{weather_info}\n\n請結合此天氣資訊，以叢雨的語氣自然地回答主人的問題：{prompt_text}"
+
+    # 👉 新增處理 MCP 執行結果
+    if mcp_info:
+        prompt_text = (
+            f"【外部工具 (MCP) 執行結果】：\n{mcp_info}\n\n"
+            f"請根據上方資訊判斷下一步。如果需要「連擊」（例如：剛搜尋完，需要繼續呼叫工具），請回傳 action_code: 4。\n"
+            f"⚠️【嚴格停手規則】：\n"
+            f"1. 若結果顯示「成功」、「已執行」等訊息，代表任務已達成。請立即停止呼叫工具，改用 action_code: 1 向主人笑著回報。\n"
+            f"2. 若結果顯示「錯誤」或查無資料，請立即停止呼叫，改用 action_code: 1 向主人道歉並說明原因。"
+        )
 
     current_time_str = time_engine.get_time_context()
     todays_schedule = time_engine.get_todays_schedule() 
@@ -143,14 +158,17 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
     if todays_schedule:
         dynamic_system_prompt += f"{todays_schedule}\n"
         
+    # 👉 動態附加當前可用的 MCP 工具清單給大腦看
+    dynamic_system_prompt += f"\n【可用的外部工具 (MCP) 清單】：\n{mcp_manager.get_tools_description()}\n"
+        
     dynamic_system_prompt += f"\n{SYSTEM_PROMPT}"
     if past_memories:
         dynamic_system_prompt += f"\n\n{past_memories}"
 
-    if not screen_description and not weather_info:
+    # 僅在第一輪對話時寫入短期記憶
+    if not screen_description and not weather_info and not mcp_info:
         memory.add_message("user", prompt_text)
         memory.add_long_term_memory(f"主人說過/做過：{prompt_text}")
-
     # 取得歷史記憶並轉換格式
     raw_history = memory.get_messages()
     openai_history = format_history_for_openai(raw_history)

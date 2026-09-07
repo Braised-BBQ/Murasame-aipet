@@ -21,6 +21,7 @@ from core.autodl_tts import AutoDLTTSConnection
 from core.tts_manager import TTSManager  # 引入新的管理器
 from core.weather import get_weather_async
 from core.weather import get_current_location_async
+from core.mcp_manager import mcp_manager
 
 last_vision_trigger_time = time.time()
 # -------------------------------------------------------------------
@@ -223,7 +224,17 @@ async def lifespan(app: FastAPI):
 
     monitor_task = asyncio.create_task(screen_monitor_loop())
     logger.info("✅ 視覺監控背景任務已掛載！")
+    # ==========================================
+    # 🌟 新增：讀取設定檔決定是否連線 MCP (Stdio 模式)
+    # ==========================================
+    enable_mcp = config_manager.get("enable_mcp", False)
     
+    if enable_mcp:
+        logger.info("🔌 設定檔已啟用 MCP，正在讀取 mcp_servers.json 啟動服務...")
+        # 👉 直接呼叫，不需要傳入任何 URL 參數
+        await mcp_manager.initialize()
+    else:
+        logger.info("⚠️ MCP 功能已在設定中關閉。")
     # ==========================================
     # 🚀 分水嶺：伺服器準備好，開始接受前端請求
     # ==========================================
@@ -234,7 +245,11 @@ async def lifespan(app: FastAPI):
     # ==========================================
     logger.info("🛑 關閉 TTS 服務...")
     tts_manager.stop()
+    logger.info("🛑 關閉 MCP 連線...")
+    await mcp_manager.shutdown()
     
+    logger.info("🛑 關閉 TTS 服務...")
+    tts_manager.stop()
     logger.info("🛑 關閉 AutoDL 連線...")
     autodl_conn.stop()
 
@@ -262,6 +277,17 @@ async def reload_settings():
         logger.error(f"⚠️ 熱修改時 TTS 切換失敗: {e}")
         return {"status": "error", "message": f"設定已生效，但 TTS 啟動發生異常: {e}"}
     
+    enable_mcp = config_manager.get("enable_mcp", False)
+    mcp_url = config_manager.get("mcp_server_url", "http://127.0.0.1:8080/mcp")
+    
+    # 先斷開舊連線
+    await mcp_manager.shutdown()
+    
+    if enable_mcp and mcp_url:
+        logger.info(f"🔌 MCP 設定更新，重新連線至: {mcp_url}...")
+        await mcp_manager.initialize(mcp_url)
+        
+    return {"status": "success", "message": "設定已熱修改生效"}
 @app.get("/api/current_location")
 async def get_current_location_api():
     """提供給前端 settings.html 讀取目前的實際定位"""
@@ -355,16 +381,57 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if llm_result.get("action_code") == 2:
                     logger.info("🧠 大腦請求調用桌面視覺...")
+                    
+                    # 💡 提取大腦給予的特別關注指示 (若無則為預設空字串)
+                    focus_instruction = llm_result.get("vision_focus", "")
+                    if focus_instruction:
+                        logger.info(f"🎯 大腦特別指示視覺模組關注: {focus_instruction}")
+                    
                     last_vision_trigger_time = time.time()
-                    v_model = config_manager.get("sub_model", "gpt-4o-mini")
-                    screen_description: str = await analyze_screen_async(model_name=v_model)
+                    v_model = config_manager.get("sub_model", "gemini-3.5-flash-lite")
+
+                    # 💡 將 focus_instruction 傳遞給視覺模組
+                    screen_description: str = await analyze_screen_async(
+                        model_name=v_model, 
+                        focus_instruction=focus_instruction
+                    )
 
                     llm_result = await ask_brain(
                         user_input, 
                         time_engine=time_engine, 
                         screen_description=screen_description
                     )
+                mcp_call_count = 0
+                MAX_MCP_CALLS = 5
 
+                while llm_result.get("action_code") == 4:
+                    if mcp_call_count >= MAX_MCP_CALLS:
+                        logger.warning("⚠️ 達到 MCP 連續調用上限，強制中斷，避免死迴圈！")
+                        # 強制塞入錯誤提示，逼迫她停止使用工具並說話 (action_code: 1)
+                        llm_result = await ask_brain(
+                            user_input, 
+                            time_engine=time_engine, 
+                            mcp_info="【系統強制提示】：你連續使用工具太多次或一直失敗，請立即停止呼叫工具，直接向主人道歉並說明你找不到或無法播放該歌單。"
+                        )
+                        break # 👈 跳出迴圈
+                        
+                    mcp_call_count += 1
+                    logger.info(f"🛠️ 大腦請求調用 MCP 工具... (第 {mcp_call_count} 次)")
+                    
+                    tool_name = str(llm_result.get("mcp_tool_name", ""))
+                    tool_args = dict(llm_result.get("mcp_tool_args", {}))
+                    
+                    if tool_name:
+                        tool_result_text = await mcp_manager.execute_tool(tool_name, tool_args)
+                        logger.info(f"🛠️ MCP 工具執行完畢，結果長度: {len(tool_result_text)}")
+
+                        llm_result = await ask_brain(
+                            user_input, 
+                            time_engine=time_engine, 
+                            mcp_info=tool_result_text  
+                        )
+                    else:
+                        break
                 # 🌟 天氣模組調用簡化：直接呼叫 get_weather_async()
                 if llm_result.get("action_code") == 3:
                     logger.info("🌤️ 大腦請求調用天氣資訊...")
@@ -421,4 +488,4 @@ async def websocket_endpoint(websocket: WebSocket):
 # 8. 啟動入口
 # -------------------------------------------------------------------
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

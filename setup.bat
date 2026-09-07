@@ -37,6 +37,7 @@ if not exist "pet_backend\config.json" (
         echo     "vision_cooldown_seconds": 300,
         echo     "vision_mse_threshold": 500,
         echo     "do_not_disturb": true,
+        echo     "enable_mcp": true,
         echo     "show_terminal": false
         echo }
     ) > "pet_backend\config.json"

@@ -167,6 +167,17 @@
       <input type="text" id="tts_model_dir" placeholder="例如: Murasame_SoVITS">
     </div>
   </div>
+  <div class="section">
+    <div class="section-title">🔌 外部工具 (MCP) 設定</div>
+    <div class="form-group" style="margin-bottom: 5px;">
+      <label>啟用 MCP 服務</label>
+      <input type="checkbox" id="enable_mcp">
+      <button id="openMcpFolderBtn" type="button" style="margin-left: 15px; padding: 6px 12px; font-size: 13px; background-color: #67c23a;">📂 開啟設定檔資料夾</button>
+    </div>
+    <div style="font-size: 12px; color: #666; margin-left: 160px; margin-bottom: 10px;">
+      (啟動前請確認資料夾內的 mcp_servers.json 已正確配置)
+    </div>
+  </div>
   <!-- 進階與功能設定 -->
   <div class="section">
     <div class="section-title">⚙️ 進階與功能設定</div>
@@ -225,10 +236,11 @@
   </div>
 
   <script>
-    const { ipcRenderer } = require('electron');
-
+    const { ipcRenderer, shell } = require('electron'); // 👈 新增 shell 模組
+    const path = require('path'); // 👈 新增這一行來處理資料夾路徑
     // 取得所有 DOM 元素
     const els = {
+      enable_mcp: document.getElementById('enable_mcp'), // 👈 新增這一行
       api_key: document.getElementById('api_key'), // 👈 改為 api_key
       base_url: document.getElementById('base_url'),
       model: document.getElementById('model'),
@@ -269,6 +281,7 @@
       }
 
       // 填入資料
+      els.enable_mcp.checked = config.enable_mcp || false; // 👈 新增這行讀取 MCP 狀態
       els.api_key.value = config.api_key || ''; // 👈 改為 api_key
       els.base_url.value = config.base_url || ''; // 👈 [新增]
       els.model.value = config.model || '';
@@ -341,6 +354,7 @@
         vision_mse_threshold: parseFloat(els.vision_mse.value),
         do_not_disturb: els.do_not_disturb.checked,
         show_terminal: els.show_terminal.checked, // 👈 [新增]
+        enable_mcp: els.enable_mcp.checked, // 👈 新增這行儲存 MCP 狀態
         model_scale: parseFloat(els.model_scale.value) // 👈 [新增] 儲存縮放比例
       };
 
@@ -374,6 +388,16 @@
       if (confirm('確定要完全退出桌寵與背景服務嗎？')) {
         ipcRenderer.send('quit-app');
       }
+    });
+    // 👇 [新增] 點擊按鈕時，透過 Electron 開啟專案根目錄 (mcp_servers.json 所在位置)
+    document.getElementById('openMcpFolderBtn').addEventListener('click', () => {
+      // 將根目錄與 pet_backend 資料夾名稱結合
+      const targetPath = path.join(process.cwd(), 'pet_backend'); 
+      
+      shell.openPath(targetPath).catch(err => {
+        console.error('無法開啟資料夾:', err);
+        alert('無法自動開啟資料夾，請確認 pet_backend 資料夾是否存在');
+      });
     });
   </script>
 </body>
