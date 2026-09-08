@@ -4,6 +4,8 @@ import uuid
 import chromadb
 from typing import Any
 from openai import AsyncOpenAI
+from datetime import datetime
+
 
 from .time_engine import TimeEngine
 # 1. 引入 ConfigManager
@@ -135,3 +137,98 @@ class MemoryManager:
             print(f"[記憶萃取失敗]: LLM 沒有回傳有效的 JSON。原始回覆：{result_text}")
         except Exception as e:
             print(f"[記憶萃取失敗]: {e}")
+
+    async def consolidate_memories(self) -> None:
+        """系統啟動時背景執行：掃描並濃縮重疊或衝突的長期記憶"""
+        try:
+            # 🌟 動態獲取 API Key 與模型名稱 (讓它能獨立運作)
+            raw_key = config_manager.get("openai_api_key", config_manager.get("api_key", ""))
+            api_key = raw_key if raw_key else "sk-dummy-key"
+            base_url = config_manager.get("base_url", None)
+            model_name = str(config_manager.get("sub_model", "gpt-4o-mini"))
+            
+            client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+            # 抓取所有一般事實記憶
+            results = self.collection.get(where={"type": "fact"})
+            
+            # 🌟 預先把資料抽出來並加上 fallback 空陣列 (or [])，徹底消滅 None 的可能性
+            ids_list: list[str] = results.get("ids") or []
+            docs_list: list[Any] = results.get("documents") or []
+            metas_list: list[Any] = results.get("metadatas") or []
+
+            if len(ids_list) < 2:
+                print("🔍 [記憶整併] 記憶數量不足，無需濃縮。")
+                return
+
+            memory_list: list[str] = []
+            for i in range(len(ids_list)):
+                doc_id = str(ids_list[i])
+                
+                # 🌟 安全讀取，保證陣列長度足夠且不為空
+                doc = str(docs_list[i]) if i < len(docs_list) and docs_list[i] is not None else ""
+                meta: dict[str, Any] = metas_list[i] if i < len(metas_list) and metas_list[i] is not None else {}
+                
+                created_at = str(meta.get("created_at", "未知時間"))
+                memory_list.append(f"ID: {doc_id} | 時間: {created_at} | 內容: {doc}")
+
+            memory_text = "\n".join(memory_list)
+
+            # 準備提示詞
+            prompt = f"""
+            你是一位專業的記憶整理員。請分析以下這批主人的長期記憶，找出「主題高度重疊、互相矛盾、或隨時間改變」的記憶進行濃縮。
+            如果某些記憶完全獨立且無衝突，請不要將它們列入濃縮清單。
+
+            【記憶清單】：
+            {memory_text}
+
+            【濃縮原則】：
+            1. 依據時間戳記判斷因果。
+            2. 嚴格輸出純 JSON 格式，必須包含 `consolidated` 陣列。
+            {{
+                "consolidated": [
+                    {{
+                        "new_fact": "濃縮演進後的新事實",
+                        "obsolete_ids": ["要被替換掉的舊記憶 ID 1"]
+                    }}
+                ]
+            }}
+            """
+
+            response = await client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": "你是一個精準的系統，請嚴格輸出 JSON 格式。"},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+
+            result_text = response.choices[0].message.content
+            if not result_text:
+                return
+
+            data = json.loads(result_text)
+            consolidated_items = data.get("consolidated", [])
+
+            for item in consolidated_items:
+                new_fact = str(item.get("new_fact", ""))
+                obsolete_ids = list(item.get("obsolete_ids", []))
+
+                if new_fact and obsolete_ids:
+                    self.collection.delete(ids=obsolete_ids)
+                    
+                    new_id = f"mem_con_{uuid.uuid4().hex[:8]}"
+                    
+                    # 🌟 明確標註 new_meta 為字典，安撫 Line 210
+                    new_meta: dict[str, Any] = {
+                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "event_time_str": "none",
+                        "type": "fact",
+                        "is_yearly": False
+                    }
+                    self.collection.add(documents=[new_fact], metadatas=[new_meta], ids=[new_id])
+                    print(f"🔄 [記憶整併完成] 已合併 {len(obsolete_ids)} 筆舊記憶 -> 新記憶：{new_fact}")
+
+        except Exception as e:
+            print(f"⚠️ [記憶整併失敗]: {e}")

@@ -224,6 +224,9 @@ async def lifespan(app: FastAPI):
 
     monitor_task = asyncio.create_task(screen_monitor_loop())
     logger.info("✅ 視覺監控背景任務已掛載！")
+    # 🌟 新增這裡：啟動時在背景執行一次記憶體檢與濃縮
+    asyncio.create_task(memory.consolidate_memories())
+    logger.info("🧠 記憶整併背景任務已觸發！")
     # ==========================================
     # 🌟 新增：讀取設定檔決定是否連線 MCP (Stdio 模式)
     # ==========================================
@@ -402,7 +405,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         screen_description=screen_description
                     )
                 mcp_call_count = 0
-                MAX_MCP_CALLS = 5
+                MAX_MCP_CALLS = 10
 
                 while llm_result.get("action_code") == 4:
                     if mcp_call_count >= MAX_MCP_CALLS:
@@ -411,7 +414,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         llm_result = await ask_brain(
                             user_input, 
                             time_engine=time_engine, 
-                            mcp_info="【系統強制提示】：你連續使用工具太多次或一直失敗，請立即停止呼叫工具，直接向主人道歉並說明你找不到或無法播放該歌單。"
+                            mcp_info="【系統強制提示】：你連續使用工具太多次或一直失敗，請立即停止呼叫工具，直接向主人說明你找不到或無法播放該歌單。"
                         )
                         break # 👈 跳出迴圈
                         

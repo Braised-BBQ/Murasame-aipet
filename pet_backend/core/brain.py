@@ -70,6 +70,7 @@ SYSTEM_PROMPT = """
     - 若使用者要求查詢特定知識、收發信件、聽音樂等，你需要調用外部工具，請輸出：
       {"action_code": 4, "mcp_tool_name": "這裡填寫你想呼叫的工具名稱", "mcp_tool_args": {"參數1": "值1"}}。此時可省略 messages。
       注意：請確保 mcp_tool_args 符合該工具的 JSON Schema。
+    -當使用者要求用...做甚麼事情時，先嘗試調用 `open_app` 工具（參數 `{"app_name": "spotify"}`）來啟動本機程式。看到啟動成功後，再重新調用一次對應的應用指令。
 - "messages": 這是一個陣列 (Array)。請根據情緒轉折，將你的回覆拆分成 1 到 3 句話。每一句話作為一個獨立的 JSON 物件，必須包含以下欄位：
   - "reply_zh": 繁體中文回覆內容 ，若有英文的型號和專有名詞可用英文(若 action_code 不為 1 則留空)。
   - "reply_jp": 準確的日文翻譯，須符合前面人設語氣和說話方式 (供 TTS 使用，若 action_code 不為 1 則留空)。
@@ -145,10 +146,12 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
     if mcp_info:
         prompt_text = (
             f"【外部工具 (MCP) 執行結果】：\n{mcp_info}\n\n"
-            f"請根據上方資訊判斷下一步。如果需要「連擊」（例如：剛搜尋完，需要繼續呼叫工具），請回傳 action_code: 4。\n"
-            f"⚠️【嚴格停手規則】：\n"
-            f"1. 若結果顯示「成功」、「已執行」等訊息，代表任務已達成。請立即停止呼叫工具，改用 action_code: 1 向主人笑著回報。\n"
-            f"2. 若結果顯示「錯誤」或查無資料，請立即停止呼叫，改用 action_code: 1 向主人道歉並說明原因。"
+            f"請根據上方資訊判斷下一步。如果需要「連擊」（如：剛搜尋完，或剛喚醒程式），請回傳 action_code: 4。\n"
+            f"⚠️【跨工具連擊與停手規則】：\n"
+            f"1. 【喚醒機制】：如果用戶提到用...做甚麼事情時(例如用spotify撥放音樂)，先嘗試調用 `open_app` 工具（參數 `{{\"app_name\": \"spotify\"}}`）來啟動本機程式。看到啟動成功後，再重新調用一次 Spotify 播放指令。\n"
+            f"2. 呼叫工具時必須嚴格遵守該工具提供的 JSON Schema，不要自己發明參數名稱。\n"
+            f"3. 若結果顯示「播放成功」、「已啟動」或任務達成，請立即停止呼叫工具，改用 action_code: 1 向主人笑著回報。\n"
+            f"4. 若真的找不到歌曲或連續發生不明錯誤，請停止呼叫，改用 action_code: 1 向主人說明遇到了什麼困難。"
         )
 
     current_time_str = time_engine.get_time_context()
