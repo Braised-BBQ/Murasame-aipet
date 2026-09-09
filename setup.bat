@@ -36,7 +36,7 @@ if not exist "pet_backend\config.json" (
         echo     "gcal_credentials_path": "credentials.json",
         echo     "vision_cooldown_seconds": 300,
         echo     "vision_mse_threshold": 500,
-        echo     "do_not_disturb": true,
+        echo     "do_not_disturb": 0,
         echo     "enable_mcp": true,
         echo     "show_terminal": false
         echo }

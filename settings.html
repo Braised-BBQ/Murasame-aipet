@@ -218,9 +218,14 @@
       <input type="number" step="0.01" min="0" max="1" id="random_event_probability" placeholder="例如: 0.15">
     </div>
     <div class="form-group">
-      <label>勿擾模式 (DND)</label>
-      <input type="checkbox" id="do_not_disturb">
-    </div>
+  <label>勿擾模式 (DND)</label>
+    <select id="do_not_disturb">
+      <option value="0">0 級：停用勿擾</option>
+      <option value="1">1 級：禁止主動視覺</option>
+      <option value="2">2 級：禁止視覺與隨機事件</option>
+      <option value="3">3 級：禁止所有主動提醒</option>
+    </select>
+  </div>
     <!-- 👇 [新增] 開啟開發者終端機選項 -->
     <div class="form-group" style="margin-top: 15px; border-top: 1px dashed var(--border-color); padding-top: 15px;">
       <label>顯示前端終端機</label>
@@ -301,7 +306,7 @@
       els.random_event_probability.value = config.random_event_probability || 0.15; // 👈 [新增]
       els.vision_cooldown.value = config.vision_cooldown_seconds || 300;
       els.vision_mse.value = config.vision_mse_threshold || 500.0;
-      els.do_not_disturb.checked = config.do_not_disturb || false;
+      els.do_not_disturb.value = config.do_not_disturb !== undefined ? config.do_not_disturb : 0;
       els.show_terminal.checked = config.show_terminal || false; // 👈 [新增] 預設為 false
      // 👇 [新增] 載入模型縮放設定
       const savedScale = config.model_scale || 1.0;
@@ -352,7 +357,7 @@
         random_event_probability: parseFloat(els.random_event_probability.value),
         vision_cooldown_seconds: parseInt(els.vision_cooldown.value, 10),
         vision_mse_threshold: parseFloat(els.vision_mse.value),
-        do_not_disturb: els.do_not_disturb.checked,
+        do_not_disturb: parseInt(els.do_not_disturb.value, 10),
         show_terminal: els.show_terminal.checked, // 👈 [新增]
         enable_mcp: els.enable_mcp.checked, // 👈 新增這行儲存 MCP 狀態
         model_scale: parseFloat(els.model_scale.value) // 👈 [新增] 儲存縮放比例

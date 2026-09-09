@@ -200,9 +200,10 @@ class TimeEngine:
             )
             print(f"⏰ [系統排程設定] 將於 {target_dt.strftime('%Y-%m-%d %H:%M:%S')} 觸發提醒。")
     async def _trigger_random_event(self) -> None:
-        # 1. 檢查勿擾模式
-        if config_manager.get("do_not_disturb", False):
-            return 
+        # 1. 檢查勿擾模式 (第二級以上：禁止隨機事件)
+        dnd_level = int(config_manager.get("do_not_disturb", 0))
+        if dnd_level >= 2:
+            return
 
         # 2. 觸發機率 (從 config 讀取，預設 15%)
         trigger_prob = config_manager.get("random_event_probability", 0.15)
@@ -279,6 +280,24 @@ class TimeEngine:
 
     # 🌟 修改此函數：加入 doc_id 與 meta，提醒完自動標記為已完成
     async def _trigger_natural_reminder(self, fact: str, doc_id: str, meta: Dict[str, Any]) -> None:
+        # 1. 檢查勿擾模式 (第三級：攔截並延後)
+        dnd_level = int(config_manager.get("do_not_disturb", 0))
+        if dnd_level >= 3:
+            print(f"🔕 [勿擾攔截] 等級 3 勿擾啟動，提醒「{fact}」將延後 3 分鐘嘗試。")
+            
+            # 不降級記憶，直接重新排入 3 分鐘後的日曆中
+            run_date = datetime.now() + timedelta(minutes=3)
+            self.scheduler.add_job(
+                self._trigger_natural_reminder,
+                trigger='date',
+                run_date=run_date,
+                args=[fact, doc_id, meta], 
+                id=f"retry_{doc_id}", # 使用相同或帶 retry 前綴的 ID
+                replace_existing=True
+            )
+            return
+
+        # 2. 正常執行提醒 (勿擾 0~2 級)
         now_str = datetime.now().strftime("%m月%d日 %H:%M")
         
         secret_prompt = f"""
@@ -295,7 +314,7 @@ class TimeEngine:
         await self.brain_api_callback(secret_prompt)
         print(f"\n🔔 [系統觸發訊號已發送]\n")
 
-        # 🌟 提醒完成後，更新 ChromaDB，把 type 從 reminder 降級成 fact，避免重啟又再提醒
+        # 3. 提醒完成後，更新 ChromaDB 降級為 fact，避免重啟又再提醒
         try:
             new_meta = meta.copy()
             new_meta["type"] = "fact"

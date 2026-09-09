@@ -136,8 +136,9 @@ async def screen_monitor_loop():
             v_model = config_manager.get("sub_model", "gpt-4o-mini")
             cooldown_seconds = config_manager.get("vision_cooldown_seconds", 600)
             
-            # 即時檢查最新的勿擾模式
-            if config_manager.get("do_not_disturb", False):
+            # 即時檢查最新的勿擾模式 (第一級以上：禁止桌面自動視覺)
+            dnd_level = int(config_manager.get("do_not_disturb", 0))
+            if dnd_level >= 1:
                 continue
             
             if not manager.active_connections:
