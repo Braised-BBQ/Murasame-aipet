@@ -13,3 +13,5 @@ paramiko
 mcp>=1.0.0
 # 高速 Python 套件執行工具 (用於啟動 Spotify MCP)
 uv>=0.4.0
+pyautogui
+audioop-lts

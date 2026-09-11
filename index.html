@@ -24,7 +24,7 @@
     /* 對話與輸入層：固定在左側偏下 */
     #chat-container {
       position: absolute;
-      bottom: 55%;       /* 離底部約四分之一的高度 */
+      bottom: 400px;     /* 離底部約四分之一的高度 */
       left: 10px;        /* 貼齊視窗左側 */
       width: 180px;      /* 限制寬度，確保文字不會超過左半邊 */
       z-index: 10;
@@ -63,6 +63,26 @@
       display: none; 
       box-shadow: 2px 2px 4px rgba(0,0,0,0.5);
     }
+    #mic-icon {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      font-size: 30px;
+      background-color: rgba(0, 0, 0, 0.6);
+      padding: 10px;
+      border-radius: 50%;
+      z-index: 9999;
+      display: none; /* 預設隱藏 */
+      /* 錄音時的紅光呼吸燈效果 */
+      box-shadow: 0 0 10px rgba(255, 82, 82, 0.8);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 82, 82, 0.7); }
+      70% { transform: scale(1.1); box-shadow: 0 0 0 15px rgba(255, 82, 82, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 82, 82, 0); }
+    }
   </style>
   
   <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
@@ -76,7 +96,7 @@
     <div id="dialogue-text"></div>
     <input type="text" id="chat-input" placeholder="對叢雨說些什麼 (按 Enter 送出)...">
   </div>
-
+  <div id="mic-icon">🎤</div>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -150,7 +150,13 @@
   </div>
   <!-- 語音合成 (TTS) 設定 -->
   <div class="section">
-    <div class="section-title">🗣️ 語音合成 (TTS) 設定</div>
+    <div class="section-title">🗣️ 語音與對話 (STT / TTS) 設定</div>
+    
+    <!-- 👇 [新增] STT 語音輸入開關 -->
+    <div class="form-group" style="margin-bottom: 15px;">
+      <label>啟用語音輸入 (STT)</label>
+      <input type="checkbox" id="enable_voice_chat">
+    </div>
     <div class="form-group">
       <label>TTS 執行模式</label>
       <select id="tts_mode">
@@ -245,6 +251,7 @@
     const path = require('path'); // 👈 新增這一行來處理資料夾路徑
     // 取得所有 DOM 元素
     const els = {
+      enable_voice_chat: document.getElementById('enable_voice_chat'),
       enable_mcp: document.getElementById('enable_mcp'), // 👈 新增這一行
       api_key: document.getElementById('api_key'), // 👈 改為 api_key
       base_url: document.getElementById('base_url'),
@@ -286,6 +293,7 @@
       }
 
       // 填入資料
+      els.enable_voice_chat.checked = config.enable_voice_chat !== undefined ? config.enable_voice_chat : false; // 👈 [新增] 預設為 false
       els.enable_mcp.checked = config.enable_mcp || false; // 👈 新增這行讀取 MCP 狀態
       els.api_key.value = config.api_key || ''; // 👈 改為 api_key
       els.base_url.value = config.base_url || ''; // 👈 [新增]
@@ -360,6 +368,7 @@
         do_not_disturb: parseInt(els.do_not_disturb.value, 10),
         show_terminal: els.show_terminal.checked, // 👈 [新增]
         enable_mcp: els.enable_mcp.checked, // 👈 新增這行儲存 MCP 狀態
+        enable_voice_chat: els.enable_voice_chat.checked, // 👈 [新增] 儲存 STT 狀態
         model_scale: parseFloat(els.model_scale.value) // 👈 [新增] 儲存縮放比例
       };
 

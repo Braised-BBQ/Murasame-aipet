@@ -341,7 +341,118 @@ chatInput.addEventListener('blur', () => {
 });
 
 init();
+// ==========================================
+// --- 7.5 語音對話 (STT) 與長按錄音邏輯 ---
+// ==========================================
+const micIcon = document.getElementById('mic-icon');
+let mediaRecorder;
+let audioChunks = [];
+let isVoiceRecording = false; 
+let pressTimer = null;
+let isKeyDown = false;
+const HOLD_DELAY = 400; // 400毫秒長按判定，避開普通打字誤觸
 
+window.addEventListener('keydown', (event) => {
+    // 檢查是否按下 CapsLock 且目前沒有在按壓狀態
+    if (event.key === "CapsLock" && !isKeyDown) {
+        isKeyDown = true;
+        console.log("⏳ 偵測到大寫鍵按下，準備錄音...");
+        
+        // 啟動長按計時器
+        pressTimer = setTimeout(async () => {
+            if (isKeyDown && !isVoiceRecording) {
+                await startRecording();
+            }
+        }, HOLD_DELAY);
+    }
+});
+
+window.addEventListener('keyup', (event) => {
+    if (event.key === "CapsLock") {
+        isKeyDown = false;
+        
+        // 如果在 HOLD_DELAY 內放開，清除計時器（視為誤觸或單純切換大小寫）
+        if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+        }
+        
+        // 如果已經在錄音了，放開時就停止並送出
+        if (isVoiceRecording) {
+            stopRecordingAndSend();
+        }
+    }
+});
+
+async function startRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await sendAudioToBackend(audioBlob);
+        };
+
+        mediaRecorder.start();
+        isVoiceRecording = true;
+        if (micIcon) micIcon.style.display = 'block'; // 顯示麥克風與呼吸燈
+        console.log("🎤 開始錄音！");
+    } catch (err) {
+        console.error("無法取得麥克風權限:", err);
+    }
+}
+
+function stopRecordingAndSend() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+    }
+    isVoiceRecording = false;
+    if (micIcon) micIcon.style.display = 'none'; // 隱藏麥克風
+    console.log("🛑 錄音結束，正在發送給大腦...");
+}
+
+async function sendAudioToBackend(blob) {
+    const formData = new FormData();
+    formData.append("audio_file", blob, "recording.webm");
+
+    // 提前顯示思考中，讓使用者知道系統正在處理語音
+    if (!window.isSpeaking && !dialogueText.innerText.includes("思考中")) {
+        showDialogue("【叢雨】\n聆聽與思考中...");
+    }
+
+    try {
+        const response = await fetch("http://localhost:8000/api/stt", {
+            method: "POST",
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === "disabled") {
+            console.log("🚫 語音對話功能目前為關閉狀態。");
+            if (dialogueText.innerText.includes("思考中")) dialogueText.style.display = 'none';
+            return;
+        }
+
+        if (data.status === "success" && data.text.trim() !== "") {
+            console.log("✅ 辨識成功：", data.text);
+            // 🌟 完美銜接：將辨識出來的文字丟進你原本寫好的 WebSocket 傳送口
+            sendToBrain("text", data.text); 
+        } else {
+            console.log("⚠️ 沒有辨識出文字。");
+            if (dialogueText.innerText.includes("思考中")) dialogueText.style.display = 'none';
+        }
+    } catch (err) {
+        console.error("❌ STT API 請求失敗:", err);
+        if (dialogueText.innerText.includes("思考中")) dialogueText.style.display = 'none';
+    }
+}
 // ==========================================
 // --- 8. 熱修改：動態調整模型與介面縮放 ---
 // ==========================================

@@ -8,7 +8,7 @@ echo 開始配置專案環境與設定
 echo =========================================
 
 echo.
-echo [1/4] 檢查並建立基礎設定檔 (config.json)...
+echo [1/5] 檢查並建立基礎設定檔 (config.json)...
 if not exist "pet_backend" mkdir "pet_backend"
 if not exist "pet_backend\config.json" (
     echo 找不到 config.json，正在為您自動建立預設設定...
@@ -37,6 +37,7 @@ if not exist "pet_backend\config.json" (
         echo     "vision_cooldown_seconds": 300,
         echo     "vision_mse_threshold": 500,
         echo     "do_not_disturb": 0,
+        echo     "enable_voice_chat": true,
         echo     "enable_mcp": true,
         echo     "show_terminal": false
         echo }
@@ -45,25 +46,44 @@ if not exist "pet_backend\config.json" (
 )
 
 echo.
-echo [2/4] 檢查 Python 虛擬環境...
-if not exist "venv\Scripts\activate.bat" (
+echo [2/5] 檢查 FFmpeg 環境...
+if not exist "pet_backend\\bin\\ffmpeg.exe" (
+    echo 找不到 FFmpeg，正在自動下載並配置...
+    if not exist "pet_backend\\bin" mkdir "pet_backend\\bin"
+    echo 下載 FFmpeg... (這可能需要幾分鐘的時間)
+    curl -L -o "pet_backend\\bin\\ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
+    
+    echo 正在解壓縮...
+    tar -xf "pet_backend\\bin\\ffmpeg.zip" -C "pet_backend\\bin" --strip-components=2 "ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe" "ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe"
+    
+    echo 清理暫存檔...
+    del "pet_backend\\bin\\ffmpeg.zip"
+    echo FFmpeg 配置完成！
+) else (
+    echo FFmpeg 已配置，略過下載。
+)
+
+
+echo.
+echo [3/5] 檢查 Python 虛擬環境...
+if not exist "venv\\Scripts\\activate.bat" (
     echo 正在尋找可用的 Python 指令並建立虛擬環境...
     
     :: 嘗試 1：使用 py (防禦 msys64 污染的最佳解)
     py -m venv venv >nul 2>&1
     
     :: 嘗試 2：如果 py 失敗，改用標準 python
-    if not exist "venv\Scripts\activate.bat" (
+    if not exist "venv\\Scripts\\activate.bat" (
         python -m venv venv >nul 2>&1
     )
     
     :: 嘗試 3：如果 python 也失敗，嘗試 python3 (某些環境的預設)
-    if not exist "venv\Scripts\activate.bat" (
+    if not exist "venv\\Scripts\\activate.bat" (
         python3 -m venv venv >nul 2>&1
     )
     
     :: 最終檢查
-    if not exist "venv\Scripts\activate.bat" (
+    if not exist "venv\\Scripts\\activate.bat" (
         echo [錯誤] 建立失敗！請確認這台電腦是否已安裝 Python，並且在安裝時有勾選 "Add Python to PATH"。
         pause
         exit /b
@@ -75,20 +95,20 @@ if not exist "venv\Scripts\activate.bat" (
 )
 
 :: 啟動虛擬環境
-call "venv\Scripts\activate.bat"
+call "venv\\Scripts\\activate.bat"
 
 echo.
-echo [3/4] 安裝 Python 依賴套件...
+echo [4/5] 安裝 Python 依賴套件...
 :: 👇 [關鍵修正 2] 絕對路徑呼叫 venv 內的 python.exe，無視全域變數干擾
-"venv\Scripts\python.exe" -m pip install --upgrade pip
+"venv\\Scripts\\python.exe" -m pip install --upgrade pip
 if exist requirements.txt (
-    "venv\Scripts\python.exe" -m pip install -r requirements.txt
+    "venv\\Scripts\\python.exe" -m pip install -r requirements.txt
 ) else (
     echo [警告] 找不到 requirements.txt
 )
 
 echo.
-echo [4/4] 安裝 Node.js 前端套件...
+echo [5/5] 安裝 Node.js 前端套件...
 if exist package.json (
     call npm install
 ) else (

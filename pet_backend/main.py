@@ -5,7 +5,7 @@ import asyncio
 import wave
 import contextlib
 from typing import Any
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect,UploadFile, File
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 from contextlib import asynccontextmanager
@@ -22,6 +22,22 @@ from core.tts_manager import TTSManager  # 引入新的管理器
 from core.weather import get_weather_async
 from core.weather import get_current_location_async
 from core.mcp_manager import mcp_manager
+from openai import AsyncOpenAI
+import base64
+import tempfile
+from pydub import AudioSegment # type: ignore
+from typing import cast, Any
+
+# -------------------------------------------------------------------
+# 設定 FFmpeg 絕對路徑 (供 pydub 轉檔使用)
+# -------------------------------------------------------------------
+PROJECT_ROOT = os.path.dirname(__file__)
+ffmpeg_path = os.path.abspath(os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe"))
+ffprobe_path = os.path.abspath(os.path.join(PROJECT_ROOT, "bin", "ffprobe.exe"))
+
+# 強制告訴 pydub 使用我們透過 setup.bat 下載在 bin 裡面的執行檔
+AudioSegment.converter = ffmpeg_path
+AudioSegment.ffprobe = ffprobe_path # type: ignore
 
 last_vision_trigger_time = time.time()
 # -------------------------------------------------------------------
@@ -265,31 +281,46 @@ async def reload_settings():
     config_manager.load()
     if time_engine is not None:
         time_engine.update_random_event_interval()
+        
     try:
         tts_manager.stop() 
         success = await tts_manager.start(config_manager) 
         
-        # 【修改這裡】加入 true/false 的判斷
         if success:
             logger.info("✅ TTS 熱修改切換成功！")
-            return {"status": "success", "message": "設定已熱修改生效"}
+            # 💡 修改點：把這裡的 return 刪除，讓程式繼續往下走
         else:
             logger.error("❌ TTS 熱修改失敗，請檢查終端機報錯。")
+            # 失敗時提早結束並回傳錯誤，這個 return 保留是正確的
             return {"status": "error", "message": "TTS 啟動失敗，請檢查終端機"}
             
     except Exception as e:
         logger.error(f"⚠️ 熱修改時 TTS 切換失敗: {e}")
+        # 發生例外時提早結束，這個 return 保留是正確的
         return {"status": "error", "message": f"設定已生效，但 TTS 啟動發生異常: {e}"}
     
+    # --- 👇 因為上面成功時沒有 return，程式現在可以順利執行到這裡 👇 ---
+
     enable_mcp = config_manager.get("enable_mcp", False)
-    mcp_url = config_manager.get("mcp_server_url", "http://127.0.0.1:8080/mcp")
     
     # 先斷開舊連線
-    await mcp_manager.shutdown()
+    try:
+        await mcp_manager.shutdown()
+    except RuntimeError as e:
+        if "Attempted to exit cancel scope in a different task" in str(e):
+            logger.warning("⚠️ 攔截到跨任務關閉警告，已強制釋放舊的 MCP 資源。")
+            # 👇 修正這裡：給它一個全新的 AsyncExitStack，而不是 None
+            mcp_manager.exit_stack = contextlib.AsyncExitStack() 
+        else:
+            raise e
+    except Exception as e:
+        logger.error(f"⚠️ 關閉舊 MCP 連線時發生異常: {e}")
+        # 👇 保險起見，其他未預期錯誤也給它一個新池子
+        mcp_manager.exit_stack = contextlib.AsyncExitStack() 
     
-    if enable_mcp and mcp_url:
-        logger.info(f"🔌 MCP 設定更新，重新連線至: {mcp_url}...")
-        await mcp_manager.initialize(mcp_url)
+    if enable_mcp:
+        logger.info("🔌 MCP 設定更新，重新讀取 mcp_servers.json 啟動服務...")
+        await mcp_manager.initialize()
         
     return {"status": "success", "message": "設定已熱修改生效"}
 @app.get("/api/current_location")
@@ -322,6 +353,83 @@ def shutdown_server():
 async def generate_tts(text_jp: str, emotion_code: int = 5) -> tuple[str, str]:
     return await tts_manager.generate(text_jp, emotion_code)
 
+# -------------------------------------------------------------------
+# 5.5 STT 語音辨識功能 (新增在這裡)
+# -------------------------------------------------------------------
+# 取得 api_key 與 base_url（確保同時支援 OpenAI 或相容於 OpenAI 格式的 Gemini 代理端點）
+raw_key = config_manager.get("openai_api_key", config_manager.get("api_key", ""))
+api_key = raw_key if raw_key else "sk-dummy-key"
+base_url = config_manager.get("base_url", None)
+
+# 建立專屬的 STT 客戶端（同時帶入 api_key 與 base_url）
+stt_client = AsyncOpenAI(
+    api_key=api_key,
+    base_url=base_url
+)
+@app.post("/api/stt")
+async def speech_to_text(audio_file: UploadFile = File(...)) -> dict[str, str]:
+    if not config_manager.get("enable_voice_chat", True):
+        logger.info("🚫 收到語音請求，但語音對話功能已在設定中關閉。")
+        return {"status": "disabled", "text": ""}
+
+    logger.info(f"🎤 收到語音檔案，正在進行格式轉換與多模態解析...")
+    
+    # 1. 建立暫存檔存放接收到的 webm
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as webm_tmp:
+        content = await audio_file.read()
+        webm_tmp.write(content)
+        webm_path = webm_tmp.name
+
+    wav_path = webm_path.replace(".webm", ".wav")
+
+    try:
+        # 2. 使用 pydub 將 webm 轉為 API 支援的 wav 格式
+        audio_segment = AudioSegment.from_file(webm_path, format="webm") # type: ignore
+        audio_segment.export(wav_path, format="wav") # type: ignore
+
+        # 3. 讀取轉好的 wav 檔案並轉成 Base64
+        with open(wav_path, "rb") as wav_file:
+            wav_content = wav_file.read()
+            audio_base64 = base64.b64encode(wav_content).decode('utf-8')
+
+        # 4. 餵給多模態大腦模型
+        payload_messages = cast(Any, [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text", 
+                        "text": "請將這段語音轉成文字。如果裡面有說話，請直接回傳你聽到的文字內容，不要額外加上標點符號或回覆其他話語。"
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_base64,
+                            "format": "wav"  # 這裡宣告格式為 wav，完美符合代理端點的要求！
+                        }
+                    }
+                ]
+            }
+        ])
+        
+        response = await stt_client.chat.completions.create(
+            model=str(config_manager.get("sub_model", "gpt-4o-mini")),
+            messages=payload_messages
+        )
+        
+        recognized_text = str(response.choices[0].message.content or "")
+        logger.info(f"✅ 多模態語音解析結果: {recognized_text}")
+        return {"status": "success", "text": recognized_text}
+        
+    except Exception as e:
+        logger.error(f"❌ 語音解析或轉檔失敗: {e}")
+        return {"status": "error", "text": ""}
+    finally:
+        # 5. 清理殘留的暫存檔
+        if os.path.exists(webm_path):
+            os.remove(webm_path)
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
 # -------------------------------------------------------------------
 # 6. WebSocket 連線管理員
 # -------------------------------------------------------------------
