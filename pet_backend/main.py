@@ -1,5 +1,13 @@
-import json
 import os
+import sys
+WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+venv_site_packages = os.path.join(WORKSPACE_ROOT, "venv", "Lib", "site-packages")
+
+# 如果該路徑尚未在搜尋雷達中，強制加到最前面 (優先載入)
+if venv_site_packages not in sys.path:
+    sys.path.insert(0, venv_site_packages)
+# ------------------------------------
+import json
 import logging
 import asyncio
 import wave
@@ -242,7 +250,7 @@ async def lifespan(app: FastAPI):
     monitor_task = asyncio.create_task(screen_monitor_loop())
     logger.info("✅ 視覺監控背景任務已掛載！")
     # 🌟 新增這裡：啟動時在背景執行一次記憶體檢與濃縮
-    asyncio.create_task(memory.consolidate_memories())
+    asyncio.create_task(memory.consolidate_memories())#type: ignore
     logger.info("🧠 記憶整併背景任務已觸發！")
     # ==========================================
     # 🌟 新增：讀取設定檔決定是否連線 MCP (Stdio 模式)

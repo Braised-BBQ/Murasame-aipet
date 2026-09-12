@@ -1,13 +1,14 @@
 import uuid
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Any, Callable, Optional, Awaitable
 import apscheduler.schedulers.asyncio  # type: ignore
 import random
-import json # 👈 確認有 import json
-import os   # 👈 確認有 import os
+import json
+import os
 from core.weather import get_weather_async
-
 from core.config_manager import config_manager
+from .cleanup import run_half_year_cleanup
 
 class TimeEngine:
     def __init__(
@@ -18,20 +19,37 @@ class TimeEngine:
         self.collection = collection
         self.brain_api_callback = brain_api_callback
         
-        # 加上 : Any，Pylance 就不會再管 add_job 的型別了
         self.scheduler: Any = apscheduler.schedulers.asyncio.AsyncIOScheduler()  # type: ignore
         self.scheduler.start()  # type: ignore
 
         # 🌟 啟動時自動還原排程，並處理錯過的今日事件
         self._reload_reminders_on_startup()
+        
         # 🌟 從 config 讀取觸發間隔，預設為 30 分鐘
         interval_minutes = config_manager.get("random_event_interval_minutes", 30)
+        
+        # 第一個排程：隨機搭話事件
         self.scheduler.add_job(
             self._trigger_random_event,
             trigger='interval',
             minutes=interval_minutes,
             id="random_event_loop"
         )
+        
+        # 第二個排程：每個月 1 號的凌晨 3 點自動執行資料庫清理
+        self.scheduler.add_job(
+            self._async_cleanup_wrapper,
+            trigger='cron',
+            day='1',
+            hour='3',
+            minute='0',
+            id="monthly_database_cleanup"
+        )
+
+    async def _async_cleanup_wrapper(self):
+        print("🧹 [系統排程] 開始執行每月例行資料庫空間釋放...")
+        await asyncio.to_thread(run_half_year_cleanup)
+
     def _get_recent_events(self) -> str:
         """讀取今天和昨天的隨機搭話紀錄，並自動清除過期記憶"""
         log_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../random_event_log.json"))
@@ -229,9 +247,35 @@ class TimeEngine:
         # 👇 [新增] 讀取近期記憶
         recent_history = self._get_recent_events()
         # 5. 組合 Secret Prompt
+        # ==========================================
+        # 🔥 一步到位：未閉環事件主動關懷
+        # ==========================================
+        unresolved_context = ""
+        # 查詢 ChromaDB 中標記為 is_unresolved = True 的近期記憶
+        try:
+            results = self.collection.get(
+                where={"is_unresolved": True}
+            )
+            if results and results.get("ids") and len(results["ids"]) > 0:
+                # 隨機挑選一件還沒解決的事情來關心
+                idx = random.randint(0, len(results["ids"]) - 1)
+                pending_tags = results["documents"][idx]
+                unresolved_context = f"【特別任務：主動關懷】\n你記得主人最近有這件事尚未解決/需要關心：「{pending_tags}」。請在這次搭話中，用關心的語氣主動詢問後續狀況。"
+                
+                # 關心完後，將該事件標記為已解決，避免無限跳針
+                doc_id = results["ids"][idx]
+                meta = results["metadatas"][idx]
+                meta["is_unresolved"] = False
+                self.collection.update(ids=[doc_id], metadatas=[meta])
+                print(f"❤️ [主動關懷觸發] 準備關心事項: {pending_tags}")
+        except Exception as e:
+            print(f"主動關懷查詢失敗: {e}")
+
+        # 在 Secret Prompt 中加入關懷指令
         secret_prompt = f"""
         【系統內部觸發任務 - 動態隨機搭話】
         當前時間：{now.strftime('%H:%M')}
+        {unresolved_context}  <-- 若有未解決事件，這行會強制改變大模型的搭話方向
         【系統環境數據】
         {weather_info}
         【近期搭話歷史紀錄】 (這是你今天和昨天已經主動開口聊過的事情)
