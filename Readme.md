@@ -62,10 +62,10 @@
 腳本將自動幫你完成以下建置：
 - 自動執行 `npm install` 安裝前端所需套件。
 - 自動執行 `pip install -r requirements.txt` 安裝 Python 中轉層依賴。
-- 在執行setup啟動時，會自動建置環境與下載依賴，在最後請確認是否有如下進度條(特別注意總項數115):
+- 在執行setup啟動時，會自動建置環境與下載依賴，在最後請確認是否有如下進度條(特別注意總項數124):
  ```
  pentelemetry-exporter-otlp-proto-grpc, mcp, google-auth-oauthlib, google-auth-httplib2, google-api-core, google-api-python-client, chromadb
-   ━━━━━╸━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  17/115 [pywin32]
+   ━━━━━╸━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  17/124 [pywin32]
  ```
 - 若是有成功出現以上進度條，則環境建置成功，靜待程式結束後關閉終端機。
 - 若無則請將終端機錯誤訊息回報。
