@@ -436,21 +436,29 @@ async function sendAudioToBackend(blob) {
         
         if (data.status === "disabled") {
             console.log("🚫 語音對話功能目前為關閉狀態。");
-            if (dialogueText.innerText.includes("思考中")) dialogueText.style.display = 'none';
+            if (dialogueText.innerText.includes("思考中")) {
+                dialogueText.style.display = 'none';
+                dialogueText.innerText = ''; // 👈 [修正] 清除狀態鎖
+            }
             return;
         }
 
         if (data.status === "success" && data.text.trim() !== "") {
             console.log("✅ 辨識成功：", data.text);
-            // 🌟 完美銜接：將辨識出來的文字丟進你原本寫好的 WebSocket 傳送口
             sendToBrain("text", data.text); 
         } else {
             console.log("⚠️ 沒有辨識出文字。");
-            if (dialogueText.innerText.includes("思考中")) dialogueText.style.display = 'none';
+            if (dialogueText.innerText.includes("思考中")) {
+                dialogueText.style.display = 'none';
+                dialogueText.innerText = ''; // 👈 [修正] 清除狀態鎖
+            }
         }
     } catch (err) {
         console.error("❌ STT API 請求失敗:", err);
-        if (dialogueText.innerText.includes("思考中")) dialogueText.style.display = 'none';
+        if (dialogueText.innerText.includes("思考中")) {
+            dialogueText.style.display = 'none';
+            dialogueText.innerText = ''; // 👈 [修正] 清除狀態鎖
+        }
     }
 }
 // ==========================================
