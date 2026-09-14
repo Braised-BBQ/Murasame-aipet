@@ -6,7 +6,8 @@ from typing import Any, cast
 import math
 import sqlite3
 from openai import AsyncOpenAI
-from datetime import datetime
+from datetime import datetime, timedelta
+import re  # 🌟 新增這行：正則表示式模組
 
 from .time_engine import TimeEngine
 from .config_manager import config_manager 
@@ -31,9 +32,10 @@ class MemoryManager:
         # 3. 記憶防疲勞冷卻字典
         self.last_recalled: dict[str, datetime] = {}
         
-        # 4. 自述錨點儲存路徑
-        self.anchor_path = os.path.join(os.path.dirname(__file__), "../latest_anchor.txt")
-
+        # 4. 雙軌自述錨點儲存路徑
+        self.recent_anchor_path = os.path.join(os.path.dirname(__file__), "../recent_anchor.txt")
+        self.core_anchor_path = os.path.join(os.path.dirname(__file__), "../core_anchor.txt")
+        
     def add_message(self, role: str, content: str):
         # 對話去重防禦
         if self.history and self.history[-1].get("role") == role:
@@ -65,7 +67,55 @@ class MemoryManager:
             return f"{delta.days // 7} 週前"
         else:
             return f"{delta.days // 30} 個月前"
+    def _extract_time_intent(self, query: str) -> tuple[datetime | None, int]:
+        """
+        解析對話中的時間意圖，回傳 (目標時間, 模糊窗口天數)
+        窗口天數 (sigma) 決定了高斯分佈的寬度。單位越大，加分範圍越廣。
+        """
+        now = datetime.now()
+        
+        # 加上明確的 dict[str, float] 型別提示，並統一數值格式
+        num_map: dict[str, float] = {
+            '一': 1.0, '二': 2.0, '兩': 2.0, '三': 3.0, '四': 4.0, '五': 5.0, 
+            '六': 6.0, '七': 7.0, '八': 8.0, '九': 9.0, '十': 10.0, '半': 0.5
+        }
+        
+        def parse_num(s: str) -> float:
+            return float(s) if s.isdigit() else float(num_map.get(s, 1.0))
 
+        # 0. 解析「幾年前」(極寬鬆的高斯曲線，涵蓋一整年，sigma=180天)
+        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十)年前', query)
+        if m:
+            years = parse_num(m.group(1))
+            return now - timedelta(days=int(years * 365)), 180
+
+        # 1. 解析「幾個月前」(寬鬆的高斯曲線，涵蓋約一到兩個月，sigma=30天)
+        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十|半)個?月前', query)
+        if m:
+            months = parse_num(m.group(1))
+            months = 6 if months == 0.5 else months
+            return now - timedelta(days=int(months * 30)), 30
+
+        # 2. 解析「幾週前」(中等的高斯曲線，sigma=7天)
+        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十)個?(週|禮拜)前', query)
+        if m:
+            weeks = parse_num(m.group(1))
+            return now - timedelta(days=int(weeks * 7)), 7
+            
+        # 3. 解析「幾天前」(嚴格的高斯曲線，sigma=2天)
+        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十)天前', query)
+        if m:
+            days = parse_num(m.group(1))
+            return now - timedelta(days=int(days)), 2
+
+        # 4. 常用口語 (同步放大去年與前年的窗口)
+        if "前年" in query: return now - timedelta(days=730), 180
+        if "去年" in query: return now - timedelta(days=365), 180
+        if "上週" in query or "上個禮拜" in query: return now - timedelta(days=7), 7
+        if "昨天" in query: return now - timedelta(days=1), 2
+        if "前天" in query: return now - timedelta(days=2), 2
+
+        return None, 0
     def search_long_term_memory(self, query: str, n_results: int = 5) -> str:
         if self.collection.count() == 0:
             return ""
@@ -87,7 +137,11 @@ class MemoryManager:
         highest_w: float = 0.0
         now = datetime.now()
         
-        # 🔥 新增：用來記錄最終勝出的記憶，以便後續進行鞏固更新
+        # 🌟 1. 先掃描這句話有沒有隱含「時間查詢意圖」
+        target_date, window_days = self._extract_time_intent(query)
+        if target_date:
+            print(f"⏱️ [時間意圖捕捉] 目標時間: {target_date.strftime('%Y-%m-%d')} | 模糊半徑: ±{window_days}天")
+        
         best_doc_id: str | None = None
         best_meta: dict[str, Any] | None = None
 
@@ -102,7 +156,6 @@ class MemoryManager:
             sim: float = 1.0 / (1.0 + distance)
             n_tags: int = min(int(str(meta.get("tags_count", 1))), 10)
             
-            # (3) 動態時間衰減 (含永久記憶機制與喚醒加權)
             created_at_str = str(meta.get("created_at", now.strftime("%Y-%m-%d %H:%M:%S")))
             created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
             delta_days: int = max(0, (now - created_at).days)
@@ -110,13 +163,10 @@ class MemoryManager:
             s_base = int(meta.get("s_base", 50))
             recall_count = int(meta.get("recall_count", 0))
             
-            # 🔥 新增：如果 S_base 達到 95 分以上，視為「永久核心記憶」，時間不會使其衰減
-            if s_base >= 95:
+            if s_base >= 95:# 永久核心記憶，完全不衰退
                 v_t: float = 1.0
-            else:
-                # 決定基礎衰減率
+            else:# 依據 S_base 與 recall_count 計算衰退係數
                 base_decay = 0.005 if s_base >= 80 else 0.05
-                # 每次成功喚醒，衰減率打 8 折（記憶越想越牢固，下限為 0.001）
                 effective_decay = max(0.001, base_decay * (0.8 ** recall_count))
                 v_t: float = math.exp(-effective_decay * delta_days)
             
@@ -129,11 +179,20 @@ class MemoryManager:
                 elif hours_since_recall < 24.0:
                     p_c = 0.5  
             
-            # 讓高相似度 (0.9) 依然很高 (0.81)，但低相似度 (0.6) 瞬間掉下去 (0.36)
+            # 🌟 3. 計算高斯時間加權 (Gaussian Temporal Bonus)
+            t_bonus = 0.0
+            if target_date and window_days > 0:
+                # 計算記憶發生日與目標日的「天數落差」
+                diff_days = abs((created_at - target_date).days)
+                
+                # 使用常態分佈公式：落差越小，得分越接近 0.3；落差超過 window_days 則分數趨近於 0
+                t_bonus = 0.3 * math.exp(- (diff_days ** 2) / (2 * (window_days ** 2)))
+
+            # 讓高相似度依然很高，低相似度瞬間掉下去，最後「加上」時間加權分
             sharpened_sim = sim ** 2 
-            w_m: float = (0.7 * sharpened_sim + 0.3 * (n_tags / 10.0)) * v_t * p_c
+            w_m: float = ((0.7 * sharpened_sim + 0.3 * (n_tags / 10.0)) * v_t * p_c) + t_bonus
             
-            print(f"🧠 [記憶評估] ID: {doc_id[-6:]} | Sim: {sim:.2f} | V_t: {v_t:.2f} (Recall: {recall_count}) | P_c: {p_c} => W = {w_m:.3f}")
+            print(f"🧠 [評估] {doc_id[-6:]} | Sim: {sim:.2f} | V_t: {v_t:.2f} | T_bonus: {t_bonus:.3f} => W: {w_m:.3f}")
 
             if w_m > highest_w and w_m >= 0.45:
                 highest_w = w_m
@@ -198,6 +257,36 @@ class MemoryManager:
                     metadatas=[updated_meta]
                 )
                 print(f"🌟 [記憶鞏固] ID: {best_doc_id[-6:]} 記憶韌性提升！目前喚醒次數: {current_recall_count}")
+                
+                # ==========================================
+                # 🔗 核心新增：因果鏈追溯喚醒 (順藤摸瓜)
+                # ==========================================
+                parent_id = best_meta.get("parent_id")
+                if parent_id and parent_id != "none" and parent_id != "null":
+                    try:
+                        parent_result = self.collection.get(ids=[str(parent_id)])
+                        
+                        # 🌟 明確抽出變數並進行 None 檢查，安撫 Pylance
+                        p_docs = parent_result.get("documents")
+                        p_metas = parent_result.get("metadatas")
+                        
+                        if p_docs is not None and len(p_docs) > 0 and p_metas is not None and len(p_metas) > 0:
+                            # 🌟 強制轉型，確保型別安全
+                            parent_doc = str(p_docs[0])
+                            p_meta_raw = p_metas[0]
+                            parent_meta = cast(dict[str, Any], p_meta_raw) if isinstance(p_meta_raw, dict) else {}
+                            parent_time = str(parent_meta.get("created_at", "過去"))
+                            
+                            best_memory_str += (
+                                f"\n\n【🔗 記憶深處的因果聯想】\n"
+                                f"這件事似乎與之前發生的這件事有直接關聯：\n"
+                                f"時間：{parent_time}\n"
+                                f"關聯事件：{parent_doc}\n"
+                            )
+                            print(f"🔗 [因果鏈喚醒] 成功串聯過去記憶: {parent_doc}")
+                    except Exception as e:
+                        print(f"⚠️ [因果鏈溯源失敗]: {e}")
+
             except Exception as e:
                 print(f"⚠️ [記憶鞏固失敗]: {e}")
 
@@ -208,6 +297,32 @@ class MemoryManager:
         api_key = raw_key if raw_key else "sk-dummy-key"
         client = AsyncOpenAI(api_key=api_key, base_url=config_manager.get("base_url", None))
         model_name = str(config_manager.get("model", "gpt-4o-mini"))
+         # 🔥 1. 前置聯想掃描：尋找可能的因果記憶 (Parent Memory)
+        potential_parent_str = "無"
+        potential_parent_id = None
+        if self.collection.count() > 0:
+            try:
+                parent_query = self.collection.query(query_texts=[user_text], n_results=1)
+                
+                # 🌟 明確抽出變數，Chroma query 回傳的是雙層陣列 List[List[...]]
+                q_ids = parent_query.get("ids")
+                q_distances = parent_query.get("distances")
+                q_docs = parent_query.get("documents")
+                
+                # 🌟 拔除 is not None，直接檢查列表是否為空
+                if (q_ids and len(q_ids) > 0 and len(q_ids[0]) > 0 and
+                    q_distances and len(q_distances) > 0 and len(q_distances[0]) > 0 and
+                    q_docs and len(q_docs) > 0 and len(q_docs[0]) > 0):
+                    
+                    # 🌟 強制轉型為 float 和 str
+                    distance = float(str(q_distances[0][0]))
+                    
+                    if distance < 1.2: 
+                        potential_parent_id = str(q_ids[0][0])
+                        parent_fact = str(q_docs[0][0])
+                        potential_parent_str = f"【關聯ID: {potential_parent_id}】 內容：「{parent_fact}」"
+            except Exception:
+                pass
 
         try:
             prompt = f"""
@@ -218,8 +333,8 @@ class MemoryManager:
             請綜合評估「資訊價值」、「情感強烈度」與「對未來關係的影響力」，給出 0-100 的 S_base：
             - [0-29] 毫無記憶價值：無意義的語氣詞、隨機亂碼 (例如：「嗯」、「好」)。
             - [30-49] 日常短期記憶：吃喝拉撒、例行公事、低情緒波動 (例如：「我今天吃麵」、「去開會」)。
-            - [50-79] 中期重要記憶：具體事件、興趣喜好、明確的情緒起伏 (例如：「剛修完一個超難的 Bug，快累死了」)。
-            - [80-94] 長期深刻記憶：強烈的情感依賴、共同經歷的重要回憶、深刻的約定 (例如：「之前我搞砸時多虧有妳陪我，週末一起去吃蛋糕吧」)。
+            - [50-79] 中期重要記憶：具體事件、明確的情緒起伏 (例如：「剛修完一個超難的 Bug，快累死了」)。
+            - [80-94] 長期深刻記憶：強烈的情感依賴、興趣喜好、共同經歷的重要回憶、深刻的約定 、長期的習慣(例如：「之前我搞砸時多虧有妳陪我，週末一起去吃蛋糕吧」)。
             - [95-100] 永久核心記憶：人生重大轉折、極度強烈的情感羈絆、對系統或彼此關係的底層定義、重要的紀念日。
 
             🔥 ⚠️ 【自述錨點 (anchor) 撰寫絕對守則】⚠️ 🔥
@@ -229,9 +344,15 @@ class MemoryManager:
             3. 絕對禁止機器感：嚴禁出現「核心模組」、「處理單元」、「數據」、「程式」等詞彙。本座是有靈魂的少女！
             
             【標籤數量限制規則 (嚴格執行)】
+            - S_base 在同區間內分數越高，盡可能打越多標籤。
             - S_base < 50：最多打 2 個標籤。
             - S_base 50~79：可打 3~5 個標籤。
             - S_base >= 80：可打 6~10 個標籤。
+
+            【🔗 因果鏈綁定 (parent_id)】
+            系統剛才在腦海中閃過了這段舊記憶：{potential_parent_str}
+            如果主人現在的話，明顯是這段舊記憶的「後續結果」、「起因」或「強烈關聯」，請在 JSON 的 parent_id 欄位填入該 ID。
+            如果毫無關聯，請務必填入 null。
 
             🌟 【時間引擎與事實萃取標準 (針對 has_event)】
             請判斷這句話是否包含「有長期記憶價值」或「需要排程提醒」的資訊。
@@ -274,6 +395,7 @@ class MemoryManager:
             s_base = int(data.get("S_base", 0))
             tags = data.get("tags", [])
             anchor = data.get("anchor", "")
+            parent_id = data.get("parent_id") # 讀取 LLM 判斷的因果鏈
             
             if s_base >= 30 and tags:
                 self.cursor.execute("SELECT MAX(id) FROM logs")
@@ -289,19 +411,22 @@ class MemoryManager:
                     "tags_count": len(tags),
                     "is_unresolved": bool(data.get("is_unresolved", False)),
                     "type": "fact",
-                    "recall_count": 0  # 🔥 新增：初始喚醒次數為 0
+                    "recall_count": 0,
+                    "parent_id": str(parent_id) if parent_id else "none" # 🔥 存入資料庫
                 }
                 tags_str = ", ".join(tags)
                 self.collection.add(documents=[tags_str], metadatas=[metadata], ids=[doc_id])
-                print(f"📌 [拓樸層打標] {tags_str} (S_base: {s_base})")
-
-            # 2. 處理自述錨點 (S_base >= 80)
-            if s_base >= 80 and anchor:
-                # 🌟 將 "w" 改成 "a"，代表在檔案尾端附加內容
-                with open(self.anchor_path, "a", encoding="utf-8") as f:
-                    # 🌟 記得加上換行符號 \n，避免所有自述黏成同一行
-                    f.write(anchor + "\n")
-                print(f"🔥 [生成自述錨點] {anchor}")
+                print(f"📌 [拓樸層打標] {tags_str} (S_base: {s_base}) | 🔗 因果綁定: {parent_id}")
+            # 💡 雙軌制：依據分數將錨點分流儲存
+            if anchor:
+                if 80 <= s_base <= 94:
+                    with open(self.recent_anchor_path, "a", encoding="utf-8") as f:
+                        f.write(anchor + "\n")
+                    print(f"🔥 [生成近期情緒錨點] {anchor}")
+                elif s_base >= 95:
+                    with open(self.core_anchor_path, "a", encoding="utf-8") as f:
+                        f.write(anchor + "\n")
+                    print(f"💎 [生成永久核心錨點] {anchor}")
 
             await time_engine.process_extracted_memory(data)
 
