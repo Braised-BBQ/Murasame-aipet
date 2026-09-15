@@ -259,33 +259,49 @@ class MemoryManager:
                 print(f"🌟 [記憶鞏固] ID: {best_doc_id[-6:]} 記憶韌性提升！目前喚醒次數: {current_recall_count}")
                 
                 # ==========================================
-                # 🔗 核心新增：因果鏈追溯喚醒 (順藤摸瓜)
+                # 🔗 核心新增：深度因果鏈追溯 (具備 DAG 環狀防護)
                 # ==========================================
-                parent_id = best_meta.get("parent_id")
-                if parent_id and parent_id != "none" and parent_id != "null":
-                    try:
-                        parent_result = self.collection.get(ids=[str(parent_id)])
+                current_parent_id = best_meta.get("parent_id")
+                visited_ids = {best_doc_id}  # 🛡️ 防護 1：記錄已經走過的節點，起點先加入
+                chain_depth = 0
+                max_depth = 3  # 🛡️ 防護 2：限制最多往上追溯 3 層，避免 Token 爆炸
+                
+                while current_parent_id and current_parent_id not in ("none", "null") and chain_depth < max_depth:
+                    # 🚨 核心防護：如果這個 ID 已經在集合裡，代表發生 DAG 循環鎖死 (A->B->A)，立刻中斷！
+                    if current_parent_id in visited_ids:
+                        print(f"⚠️ [因果鏈防護] 偵測到邏輯死循環 (Cycle Detected)，已強制切斷連結：{current_parent_id}")
+                        break
                         
-                        # 🌟 明確抽出變數並進行 None 檢查，安撫 Pylance
+                    visited_ids.add(current_parent_id)
+                    
+                    try:
+                        parent_result = self.collection.get(ids=[str(current_parent_id)])
                         p_docs = parent_result.get("documents")
                         p_metas = parent_result.get("metadatas")
                         
-                        if p_docs is not None and len(p_docs) > 0 and p_metas is not None and len(p_metas) > 0:
-                            # 🌟 強制轉型，確保型別安全
+                        if p_docs and len(p_docs) > 0 and p_metas and len(p_metas) > 0:
                             parent_doc = str(p_docs[0])
                             p_meta_raw = p_metas[0]
                             parent_meta = cast(dict[str, Any], p_meta_raw) if isinstance(p_meta_raw, dict) else {}
                             parent_time = str(parent_meta.get("created_at", "過去"))
                             
                             best_memory_str += (
-                                f"\n\n【🔗 記憶深處的因果聯想】\n"
+                                f"\n\n【🔗 記憶深處的因果聯想 (追溯深度 {chain_depth + 1})】\n"
                                 f"這件事似乎與之前發生的這件事有直接關聯：\n"
                                 f"時間：{parent_time}\n"
                                 f"關聯事件：{parent_doc}\n"
                             )
                             print(f"🔗 [因果鏈喚醒] 成功串聯過去記憶: {parent_doc}")
+                            
+                            # 🌟 順藤摸瓜：把 current_parent_id 更新為「上一代的 parent_id」，準備進入下一圈迴圈
+                            current_parent_id = parent_meta.get("parent_id")
+                            chain_depth += 1
+                        else:
+                            # 找不到該記憶節點，代表因果鏈已斷裂，結束追溯
+                            break 
                     except Exception as e:
                         print(f"⚠️ [因果鏈溯源失敗]: {e}")
+                        break
 
             except Exception as e:
                 print(f"⚠️ [記憶鞏固失敗]: {e}")
@@ -296,7 +312,7 @@ class MemoryManager:
         raw_key = config_manager.get("openai_api_key", config_manager.get("api_key", ""))
         api_key = raw_key if raw_key else "sk-dummy-key"
         client = AsyncOpenAI(api_key=api_key, base_url=config_manager.get("base_url", None))
-        model_name = str(config_manager.get("model", "gpt-4o-mini"))
+        model_name = str(config_manager.get("sub_model", "gpt-4o-mini"))
          # 🔥 1. 前置聯想掃描：尋找可能的因果記憶 (Parent Memory)
         potential_parent_str = "無"
         potential_parent_id = None
@@ -347,7 +363,8 @@ class MemoryManager:
             - S_base 在同區間內分數越高，盡可能打越多標籤。
             - S_base < 50：最多打 2 個標籤。
             - S_base 50~79：可打 3~5 個標籤。
-            - S_base >= 80：可打 6~10 個標籤。
+            - S_base 80~94：可打 6~10 個標籤。
+            - S_base >= 95：可打 最多 20 個標籤。
 
             【🔗 因果鏈綁定 (parent_id)】
             系統剛才在腦海中閃過了這段舊記憶：{potential_parent_str}
