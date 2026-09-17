@@ -136,24 +136,61 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
     # 若沒有特殊資訊，才去搜尋長期記憶
     if not screen_description and not weather_info and not mcp_info:
         # ==========================================
-        # 🔥 一步到位：前置標籤萃取 (解決非對稱檢索)
+        # 🔥 一步到位：前置標籤與時間意圖萃取 (LLM 雙效解析)
         # ==========================================
         client, current_model = get_openai_client_and_model()
+        search_query = prompt_text
+        target_days_ago = None
+        time_window = 0
+        
         try:
+            current_time_str = time_engine.get_time_context()
+            tag_prompt = f"""
+            當前時間：{current_time_str}
+            請分析主人的話：「{prompt_text}」
+            
+            1. tags: 提取 2~5 個極度精煉的核心檢索標籤。
+               【嚴格約束】：
+               - 每個標籤限制 2~4 個字，絕對禁止短句或動賓詞組！
+               - 必須從「實體(名詞)」、「動作」、「情感」三個維度提取。
+               - 若涉及主人的個人資料(生日/喜好/職業等)，強制加上 `[主人情報]` 標籤。
+               - ❌ 錯誤示範："我的生日, 忘記了, 幾號" 
+               - ✅ 正確示範："生日, 忘記, 疑問, [主人情報]"
+               - ❌ 錯誤示範："去台北玩, 吃拉麵, 覺得開心"
+               - ✅ 正確示範："台北, 旅遊, 拉麵, 開心"
+               請用半形逗號分隔直接輸出。
+            2. target_days_ago: 若主人提到過去回憶的時間(如:昨天=1, 兩週前=14, 三個月前=90, 去年=365)，並非是事件內含的時間(如主人說過1/1要去日本，請填null，如果主人說在一個月前跟你說過1/1要去日本，請填入一個月前的日期)，請精準推算大約是「幾天前」(填寫整數)。若完全無提及過去時間，請填 null。
+            3. time_window: 根據時間的模糊程度給予寬容度(天)。(幾天前=2, 幾週前=7, 幾個月前=30, 去年/幾年前=365)。若無時間填 0。
+            
+            請嚴格輸出 JSON 格式，例如：{{"tags": "生日,約定", "target_days_ago": 14, "time_window": 7}}
+            """
+            
             tag_response = await client.chat.completions.create(
-                model=config_manager.get("sub_model", "gpt-4o-mini"), 
+                model=config_manager.get("sub_model", "gemini-1.5-flash-8b"), 
                 messages=[
-                    {"role": "system", "content": "你是一個關鍵字萃取器。請將使用者的話濃縮成 1~10 個核心名詞或情緒標籤，用半形逗號分隔。例如: '我今天加班好累' -> '加班,疲倦'。請直接輸出標籤，不要有任何廢話。"},
-                    {"role": "user", "content": prompt_text}
+                    {"role": "system", "content": "你是一個精準的記憶檢索分析器，嚴格輸出 JSON。"},
+                    {"role": "user", "content": tag_prompt}
                 ],
-                max_tokens=20
+                response_format={"type": "json_object"}
             )
-            search_query = tag_response.choices[0].message.content or prompt_text
-            print(f"🔍 [前置檢索轉換] 原始對話: {prompt_text} -> 檢索標籤: {search_query}")
-        except Exception:
-            search_query = prompt_text # 失敗則退回原始字串搜尋
+            
+            result_json = json.loads(tag_response.choices[0].message.content or "{}")
+            search_query = result_json.get("tags", prompt_text)
+            target_days_ago = result_json.get("target_days_ago")
+            time_window = int(result_json.get("time_window", 0))
+            
+            print(f"🔍 [前置檢索] 標籤: {search_query} | 目標: {target_days_ago} 天前 | 模糊窗: {time_window} 天")
+        except Exception as e:
+            print(f"⚠️ [前置檢索失敗]: {e}")
+            search_query = prompt_text
 
-        past_memories = memory.search_long_term_memory(search_query) # 用標籤去搜標籤
+        # 🌟 把 LLM 算好的天數，直接當作參數餵給 ChromaDB 記憶模組
+        past_memories = memory.search_long_term_memory(
+            query=search_query, 
+            n_results=15, 
+            target_days_ago=target_days_ago, 
+            time_window=time_window
+        )
         # ==========================================
 
     # === 處理外部資訊注入 ===
@@ -185,21 +222,32 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
     dynamic_system_prompt += f"\n【可用的外部工具 (MCP) 清單】：\n{mcp_manager.get_tools_description()}\n"
     
     # ==========================================
-    # 🔥 載入自述錨點層 (動態人格變異)
+    # 🔥 載入雙軌自述錨點層 (核心人格 + 近期情緒)
     # ==========================================
-    anchor_path = os.path.join(os.path.dirname(__file__), "../latest_anchor.txt")
-    if os.path.exists(anchor_path):
-        with open(anchor_path, "r", encoding="utf-8") as f:
-            # 讀取所有行，並順手過濾掉可能的空行
-            lines = [line.strip() for line in f.readlines() if line.strip()]
+    recent_anchor_path = os.path.join(os.path.dirname(__file__), "../recent_anchor.txt")
+    core_anchor_path = os.path.join(os.path.dirname(__file__), "../core_anchor.txt")
+    
+    # 💡 加上型別標註，明確告訴 Pylance 這是一個裝字串的陣列
+    combined_anchors: list[str] = []
+    
+    # 1. 讀取永久核心錨點 (S_base >= 95)
+    if os.path.exists(core_anchor_path):
+        with open(core_anchor_path, "r", encoding="utf-8") as f:
+            core_lines = [line.strip() for line in f.readlines() if line.strip()]
+        if core_lines:
+            combined_anchors.append("【深深刻在靈魂裡的重要核心記憶】：\n" + "\n".join(core_lines[-5:]))
             
-        if lines:
-            # 🌟 核心修改：只取陣列的最後 5 筆 (你可以依據需求把 -5 改成 -10 等數字)
-            recent_anchors = "\n".join(lines[-5:])
+    # 2. 讀取近期情緒錨點 (80 <= S_base <= 94)
+    if os.path.exists(recent_anchor_path):
+        with open(recent_anchor_path, "r", encoding="utf-8") as f:
+            recent_lines = [line.strip() for line in f.readlines() if line.strip()]
+        if recent_lines:
+            combined_anchors.append("【最近幾天的內心小劇場與情緒底色】：\n" + "\n".join(recent_lines[-3:]))
             
-            dynamic_system_prompt += f"\n【你當前的內心心境 (請維持這個情緒底色)】：\n「{recent_anchors}」\n"
+    if combined_anchors:
+        anchor_text = "\n\n".join(combined_anchors)
+        dynamic_system_prompt += f"\n\n【妳目前的內心狀態與重要記憶 (請以此為基礎做出反應)】：\n{anchor_text}\n"
     # ==========================================
-
     dynamic_system_prompt += f"\n{SYSTEM_PROMPT}"
     if past_memories:
         dynamic_system_prompt += f"\n\n{past_memories}"

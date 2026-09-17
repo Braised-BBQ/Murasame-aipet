@@ -7,7 +7,7 @@ import math
 import sqlite3
 from openai import AsyncOpenAI
 from datetime import datetime, timedelta
-import re  # 🌟 新增這行：正則表示式模組
+
 
 from .time_engine import TimeEngine
 from .config_manager import config_manager 
@@ -67,56 +67,9 @@ class MemoryManager:
             return f"{delta.days // 7} 週前"
         else:
             return f"{delta.days // 30} 個月前"
-    def _extract_time_intent(self, query: str) -> tuple[datetime | None, int]:
-        """
-        解析對話中的時間意圖，回傳 (目標時間, 模糊窗口天數)
-        窗口天數 (sigma) 決定了高斯分佈的寬度。單位越大，加分範圍越廣。
-        """
-        now = datetime.now()
-        
-        # 加上明確的 dict[str, float] 型別提示，並統一數值格式
-        num_map: dict[str, float] = {
-            '一': 1.0, '二': 2.0, '兩': 2.0, '三': 3.0, '四': 4.0, '五': 5.0, 
-            '六': 6.0, '七': 7.0, '八': 8.0, '九': 9.0, '十': 10.0, '半': 0.5
-        }
-        
-        def parse_num(s: str) -> float:
-            return float(s) if s.isdigit() else float(num_map.get(s, 1.0))
-
-        # 0. 解析「幾年前」(極寬鬆的高斯曲線，涵蓋一整年，sigma=180天)
-        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十)年前', query)
-        if m:
-            years = parse_num(m.group(1))
-            return now - timedelta(days=int(years * 365)), 180
-
-        # 1. 解析「幾個月前」(寬鬆的高斯曲線，涵蓋約一到兩個月，sigma=30天)
-        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十|半)個?月前', query)
-        if m:
-            months = parse_num(m.group(1))
-            months = 6 if months == 0.5 else months
-            return now - timedelta(days=int(months * 30)), 30
-
-        # 2. 解析「幾週前」(中等的高斯曲線，sigma=7天)
-        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十)個?(週|禮拜)前', query)
-        if m:
-            weeks = parse_num(m.group(1))
-            return now - timedelta(days=int(weeks * 7)), 7
-            
-        # 3. 解析「幾天前」(嚴格的高斯曲線，sigma=2天)
-        m = re.search(r'(\d+|一|二|兩|三|四|五|六|七|八|九|十)天前', query)
-        if m:
-            days = parse_num(m.group(1))
-            return now - timedelta(days=int(days)), 2
-
-        # 4. 常用口語 (同步放大去年與前年的窗口)
-        if "前年" in query: return now - timedelta(days=730), 180
-        if "去年" in query: return now - timedelta(days=365), 180
-        if "上週" in query or "上個禮拜" in query: return now - timedelta(days=7), 7
-        if "昨天" in query: return now - timedelta(days=1), 2
-        if "前天" in query: return now - timedelta(days=2), 2
-
-        return None, 0
-    def search_long_term_memory(self, query: str, n_results: int = 5) -> str:
+ 
+# 🌟 參數改為接收 LLM 計算好的 target_days_ago 和 time_window
+    def search_long_term_memory(self, query: str, n_results: int = 5, target_days_ago: int | None = None, time_window: int = 0) -> str:
         if self.collection.count() == 0:
             return ""
             
@@ -137,10 +90,13 @@ class MemoryManager:
         highest_w: float = 0.0
         now = datetime.now()
         
-        # 🌟 1. 先掃描這句話有沒有隱含「時間查詢意圖」
-        target_date, window_days = self._extract_time_intent(query)
-        if target_date:
-            print(f"⏱️ [時間意圖捕捉] 目標時間: {target_date.strftime('%Y-%m-%d')} | 模糊半徑: ±{window_days}天")
+        # 🌟 直接將 LLM 傳來的「天數」換算成具體日期
+        target_date = None
+        window_days = time_window
+        
+        if target_days_ago is not None:
+            target_date = now - timedelta(days=int(target_days_ago))
+            print(f"⏱️ [LLM 時間對齊] 換算目標日: {target_date.strftime('%Y-%m-%d')} | 模糊半徑: ±{window_days}天")
         
         best_doc_id: str | None = None
         best_meta: dict[str, Any] | None = None
@@ -348,7 +304,7 @@ class MemoryManager:
             【S_base 記憶深度打分指南 (多維度綜合評估)】
             請綜合評估「資訊價值」、「情感強烈度」與「對未來關係的影響力」，給出 0-100 的 S_base：
             - [0-29] 毫無記憶價值：無意義的語氣詞、隨機亂碼 (例如：「嗯」、「好」)。
-            - [30-49] 日常短期記憶：吃喝拉撒、例行公事、低情緒波動 (例如：「我今天吃麵」、「去開會」)。
+            - [30-49] 日常短期記憶：吃喝拉撒、例行公事、低情緒波動、日常互動、指令 (例如：「我今天吃麵」、「去開會」)。
             - [50-79] 中期重要記憶：具體事件、明確的情緒起伏 (例如：「剛修完一個超難的 Bug，快累死了」)。
             - [80-94] 長期深刻記憶：強烈的情感依賴、興趣喜好、共同經歷的重要回憶、深刻的約定 、長期的習慣(例如：「之前我搞砸時多虧有妳陪我，週末一起去吃蛋糕吧」)。
             - [95-100] 永久核心記憶：人生重大轉折、極度強烈的情感羈絆、對系統或彼此關係的底層定義、重要的紀念日。
@@ -358,18 +314,31 @@ class MemoryManager:
             1. 人設綁定：自稱必須是「本座」，稱呼對方為「主人」。
             2. 性格特質：稍微有點傲嬌但同時你喜歡甜食、撒嬌。表面上有時會吐槽主人，但內心深處其實非常高興、心疼且依賴主人。
             3. 絕對禁止機器感：嚴禁出現「核心模組」、「處理單元」、「數據」、「程式」等詞彙。本座是有靈魂的少女！
+
+            【標籤提取規則 (極簡維度化打標)】
+            請務必從以下維度提取標籤，確保記憶具備立體的聯想力，但必須「極度俐落」：
+            1. 實體(Entity)：具體人、事、物、地點 (如：鍵盤、期中考、麥當勞)。
+            2. 動作(Action)：動詞或事件本質 (如：購買、搞砸、約定)。
+            3. 情感(Emotion)：主人的情緒狀態 (如：焦慮、開心、疲倦)。
+            4. 事實收束(Fact)：若涉及主人的「個人基本資料」或「長期絕對偏好」，強制加入 `[主人情報]` 標籤。
+
+            【絕對排版限制】
+            - 每個標籤長度嚴格限制在 2~5 個字以內。
+            - 絕對禁止保留口語字綴 (如：的、了、啊) 或完整短句。
+            - ❌ 壞標籤：["今天寫程式", "超多Bug", "修不好很煩"]
+            - ✅ 好標籤：["程式", "Bug", "修復失敗", "煩躁"]
             
             【標籤數量限制規則 (嚴格執行)】
             - S_base 在同區間內分數越高，盡可能打越多標籤。
-            - S_base < 50：最多打 2 個標籤。
-            - S_base 50~79：可打 3~5 個標籤。
-            - S_base 80~94：可打 6~10 個標籤。
-            - S_base >= 95：可打 最多 20 個標籤。
+            - S_base < 50：最多打 2 個標籤(挑重點)。
+            - S_base 50~79：可打 3~5 個標籤(盡量涵蓋三個維度)。
+            - S_base 80~94：可打 6~10 個標籤(豐富細節)。
+            - S_base >= 95：可打 最多 15 個標籤(豐富細節，可加入叢雨自己的感受標籤)。
 
             【🔗 因果鏈綁定 (parent_id)】
             系統剛才在腦海中閃過了這段舊記憶：{potential_parent_str}
             如果主人現在的話，明顯是這段舊記憶的「後續結果」、「起因」或「強烈關聯」，請在 JSON 的 parent_id 欄位填入該 ID。
-            如果毫無關聯，請務必填入 null。
+            如果無太大關聯，請務必填入 null。
 
             🌟 【時間引擎與事實萃取標準 (針對 has_event)】
             請判斷這句話是否包含「有長期記憶價值」或「需要排程提醒」的資訊。
@@ -398,7 +367,7 @@ class MemoryManager:
             response = await client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "system", "content": "你是一個精準的記憶評估引擎，嚴格輸出 JSON。"}, {"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
+                #response_format={"type": "json_object"}
             )
             
             result_text = response.choices[0].message.content or "{}"
