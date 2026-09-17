@@ -67,7 +67,50 @@ class MemoryManager:
             return f"{delta.days // 7} 週前"
         else:
             return f"{delta.days // 30} 個月前"
- 
+        
+    def metabolize_dead_memories(self) -> int:
+        """
+        清理向量庫中 V_t 已經衰減殆盡的無用日常記憶，釋放候選名額。
+        """
+        now = datetime.now()
+        all_data = self.collection.get()
+        ids_list = all_data.get("ids", [])
+        metas_list = all_data.get("metadatas", [])
+        
+        if not ids_list or not metas_list:
+            return 0
+            
+        # 🌟 解決 append 報錯：明確宣告這是一個裝字串的陣列
+        dead_ids: list[str] = []
+        
+        for doc_id, meta_raw in zip(ids_list, metas_list):
+            # 🌟 解決 Pylance 報錯：強制宣告 meta 是一個字典
+            meta = cast(dict[str, Any], meta_raw) if isinstance(meta_raw, dict) else {}
+            
+            # 以下維持原本的邏輯，Pylance 就不會再對 get() 畫紅線了
+            s_base = int(str(meta.get("s_base", 50)))
+            recall_count = int(str(meta.get("recall_count", 0)))
+            
+            if s_base >= 80 or recall_count >= 3:
+                continue
+                
+            created_at_str = str(meta.get("created_at", now.strftime("%Y-%m-%d %H:%M:%S")))
+            created_at = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
+            delta_days = max(0, (now - created_at).days)
+            
+            base_decay = 0.05
+            effective_decay = max(0.001, base_decay * (0.8 ** recall_count))
+            v_t = math.exp(-effective_decay * delta_days)
+            
+            if v_t < 0.01:
+                dead_ids.append(str(doc_id))
+                
+        if dead_ids:
+            self.collection.delete(ids=dead_ids)
+            print(f"🧹 [記憶代謝] 已成功清理 {len(dead_ids)} 筆 V_t (< 0.01) 的瑣碎記憶！")
+            
+        return len(dead_ids)
+    
 # 🌟 參數改為接收 LLM 計算好的 target_days_ago 和 time_window
     def search_long_term_memory(self, query: str, n_results: int = 5, target_days_ago: int | None = None, time_window: int = 0) -> str:
         if self.collection.count() == 0:

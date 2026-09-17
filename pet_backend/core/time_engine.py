@@ -14,21 +14,21 @@ class TimeEngine:
     def __init__(
         self, 
         collection: Any, 
-        brain_api_callback: Callable[[str], Awaitable[Dict[str, Any]]] | Any
+        brain_api_callback: Callable[[str], Awaitable[Dict[str, Any]]] | Any,
+        memory_manager: Any = None  # 🌟 接收參數
     ):
         self.collection = collection
         self.brain_api_callback = brain_api_callback
         
-        self.scheduler: Any = apscheduler.schedulers.asyncio.AsyncIOScheduler()  # type: ignore
-        self.scheduler.start()  # type: ignore
-
-        # 🌟 啟動時自動還原排程，並處理錯過的今日事件
-        self._reload_reminders_on_startup()
+        # 🌟 解決 Pylance 報錯：加上 : Any 明確宣告型別
+        self.memory_manager: Any = memory_manager  
         
-        # 🌟 從 config 讀取觸發間隔，預設為 30 分鐘
+        self.scheduler: Any = apscheduler.schedulers.asyncio.AsyncIOScheduler() 
+        self.scheduler.start() 
+
+        self._reload_reminders_on_startup()
         interval_minutes = config_manager.get("random_event_interval_minutes", 30)
         
-        # 第一個排程：隨機搭話事件
         self.scheduler.add_job(
             self._trigger_random_event,
             trigger='interval',
@@ -36,15 +36,29 @@ class TimeEngine:
             id="random_event_loop"
         )
         
-        # 第二個排程：每個月 1 號的凌晨 3 點自動執行資料庫清理
+        # 第二個排程：每次開機 10 分鐘後，自動執行 SQLite 資料庫清理
+        run_date_cleanup = datetime.now() + timedelta(minutes=10)
         self.scheduler.add_job(
             self._async_cleanup_wrapper,
-            trigger='cron',
-            day='1',
-            hour='3',
-            minute='0',
-            id="monthly_database_cleanup"
+            trigger='date',
+            run_date=run_date_cleanup,
+            id="startup_database_cleanup"
         )
+
+        # 第三個排程：每次開機 5 分鐘後，執行向量大腦代謝
+        if self.memory_manager:
+            run_date_metabolism = datetime.now() + timedelta(minutes=5)
+            self.scheduler.add_job(
+                self._async_metabolize_wrapper,
+                trigger='date',
+                run_date=run_date_metabolism,
+                id="startup_memory_metabolism"
+            )
+
+    async def _async_metabolize_wrapper(self):
+        print("🧠 [系統排程] 開機背景任務：執行向量大腦代謝，釋放檢索空間...")
+        if self.memory_manager:
+            await asyncio.to_thread(self.memory_manager.metabolize_dead_memories)
 
     async def _async_cleanup_wrapper(self):
         print("🧹 [系統排程] 開始執行每月例行資料庫空間釋放...")
