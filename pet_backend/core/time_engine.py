@@ -209,7 +209,27 @@ class TimeEngine:
                 target_dt = datetime.strptime(str(time_str), "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 pass
-
+        # ==========================================
+        # 🛡️ 核心防護：ChromaDB 語意防重複排程
+        # ==========================================
+        if is_future and time_str:
+            try:
+                # 尋找「同一個時間點」且「同樣是 reminder 類型」的現有記憶
+                existing = self.collection.query(
+                    query_texts=[fact],
+                    n_results=1,
+                    where={"$and": [{"type": "reminder"}, {"event_time_str": str(time_str)}]}
+                )
+                
+                # 如果有找到，而且語意距離 < 0.4 (代表是同一件事的換句話說)
+                if existing and existing.get("distances") and len(existing["distances"][0]) > 0:
+                    dist = float(existing["distances"][0][0])
+                    if dist < 0.4:
+                        print(f"🚫 [排程防重] 偵測到重複的待辦事項：「{fact}」，已自動攔截。")
+                        return # 直接結束，不往下建立新記憶！
+            except Exception as e:
+                print(f"⚠️ [排程防重檢查失敗]: {e}")
+        # ==========================================
         doc_id = f"mem_{uuid.uuid4().hex[:8]}"
         metadata: Dict[str, Any] = {
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

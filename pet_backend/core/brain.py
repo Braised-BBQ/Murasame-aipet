@@ -154,6 +154,9 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
                - 每個標籤限制 2~4 個字，絕對禁止短句或動賓詞組！
                - 必須從「實體(名詞)」、「動作」、「情感」三個維度提取。
                - 若涉及主人的個人資料(生日/喜好/職業等)，強制加上 `[主人情報]` 標籤。
+               -  若主人詢問未來的承諾、計畫或重大事件（如：明年要做什麼？我們約好了什麼？），請主動加上 `[核心約定]` 或對應的時間錨點（如：`明年`、`未來`）。
+               -  若主人尋求情感安慰或回憶感動時刻，請主動加上 `[情感羈絆]`。
+               - ⚠️ 若主人提到的是「事件發生的月份/時間」(如：明年要做什麼)，請將「明年」當作一般標籤放進 tags 裡，不要放進 target_days_ago！
                - ❌ 錯誤示範："我的生日, 忘記了, 幾號" 
                - ✅ 正確示範："生日, 忘記, 疑問, [主人情報]"
                - ❌ 錯誤示範："去台北玩, 吃拉麵, 覺得開心"
@@ -287,18 +290,60 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
         if not result_text:
             raise ValueError("Empty response from OpenAI")
             
-        result_json = json.loads(result_text)
+        raw_parsed = json.loads(result_text)
+        
+        # 🌟 1. 明確宣告 result_json 的型別，讓 Pylance 放心
+        result_json: dict[str, Any] = {}
+        
+        if isinstance(raw_parsed, list):
+            # 🌟 2. 明確告訴 Pylance 這是一個清單
+            raw_list = cast(list[Any], raw_parsed)
+            if len(raw_list) > 0:
+                first_item = raw_list[0]
+                if isinstance(first_item, dict):
+                    # 🌟 3. 明確告訴 Pylance 拿出來的元素是一個字典
+                    first_dict = cast(dict[str, Any], first_item)
+                    if "action_code" in first_dict:
+                        # 情況 A：大腦多包了一層陣列 [{"action_code": 1, "messages": [...]}]
+                        result_json = first_dict
+                    elif "reply_zh" in first_dict:
+                        # 情況 B：大腦忘記外殼，直接回傳對話陣列
+                        result_json = {
+                            "action_code": 1,
+                            "messages": raw_list
+                        }
+        elif isinstance(raw_parsed, dict):
+            # 情況 C：完全標準的正常格式
+            result_json = cast(dict[str, Any], raw_parsed)
 
+        # 此時 result_json 已被靜態分析確認為 dict[str, Any]，get() 絕對不會再報錯
         if result_json.get("action_code") == 1:
             full_reply = ""
-            for msg in result_json.get("messages", []):
-                full_reply += msg.get("reply_zh", "")
+            raw_messages = result_json.get("messages", [])
             
+            if isinstance(raw_messages, list):
+                # 🌟 告訴 Pylance 這是一個包含任意型別的清單
+                for item in cast(list[Any], raw_messages):
+                    if isinstance(item, dict):
+                        msg_dict = cast(dict[str, Any], item)
+                        full_reply += str(msg_dict.get("reply_zh", ""))
+                    elif isinstance(item, list):
+                        # 🌟 內層迴圈也同樣加上 cast
+                        for sub_item in cast(list[Any], item):
+                            if isinstance(sub_item, dict):
+                                sub_dict = cast(dict[str, Any], sub_item)
+                                full_reply += str(sub_dict.get("reply_zh", ""))
+                            elif isinstance(sub_item, str):
+                                full_reply += sub_item
+                    elif isinstance(item, str):
+                        full_reply += item
+            elif isinstance(raw_messages, str):
+                full_reply = raw_messages
+
             memory.add_message("model", full_reply)
             asyncio.create_task(memory.extract_and_save_memory(prompt_text, time_engine))
 
         return result_json
-
     except Exception as e:
         print(f"[Brain Error] 大腦處理失敗: {e}")
         return {
