@@ -3,9 +3,17 @@ import sys
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 venv_site_packages = os.path.join(WORKSPACE_ROOT, "venv", "Lib", "site-packages")
 
-# 如果該路徑尚未在搜尋雷達中，強制加到最前面 (優先載入)
 if venv_site_packages not in sys.path:
     sys.path.insert(0, venv_site_packages)
+
+# -------------------------------------------------------------------
+# 🌟 [關鍵修正] 在載入 pydub 或任何音訊庫前，先把 bin 註冊進系統 PATH
+# -------------------------------------------------------------------
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+BIN_DIR = os.path.join(PROJECT_ROOT, "bin")
+if os.path.exists(BIN_DIR) and BIN_DIR not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
+
 # ------------------------------------
 import json
 import logging
@@ -39,7 +47,7 @@ from typing import cast, Any
 # -------------------------------------------------------------------
 # 設定 FFmpeg 絕對路徑 (供 pydub 轉檔使用)
 # -------------------------------------------------------------------
-PROJECT_ROOT = os.path.dirname(__file__)
+
 ffmpeg_path = os.path.abspath(os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe"))
 ffprobe_path = os.path.abspath(os.path.join(PROJECT_ROOT, "bin", "ffprobe.exe"))
 

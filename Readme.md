@@ -138,6 +138,29 @@
 - **運行時後端終端監視器**：若需要監看後端終端機輸出，請在啟動時選擇 `test_start.bat`。
 - **關閉進程**:開啟時會自動尋找並砍掉 8000 埠佔用者，請注意。
 
+## 效能與成本優化
+- **Token 體積優化 (MCP 工具精簡)：**
+
+  - 記憶系統與大腦在每輪對話中會多次調用模型。若掛載了龐大的第三方 MCP 伺服器（如包含數十個工具的 Spotify），其原始 JSON Schema 與詳細描述可能高達十幾萬字元，導致單次對話的 Input Token 飆破數萬。
+
+  - 解法：在 mcp_manager.py 內實作 SPOTIFY_WHITELIST 工具白名單，只載入核心工具，並在註冊時精簡 inputSchema 說明欄位，將工具清單壓縮至數千字元以內。
+
+- **關閉隱藏思考 (Reasoning Effort)：**
+
+  - 透過 OpenAI 相容端點調用具備推導能力的 Gemini 模型時，預設會在背景生成大量不可見的思考 Token（以高額 Output 費率計費），造成額度快速消耗並增加回覆延遲。
+
+  - 解法：在 brain.py、memory.py 所有呼叫 client.chat.completions.create 的地方加入 reasoning_effort="none"或 reasoning_effort="low" 徹底關閉或降低推理。(有mcp任務建議不要在大腦處理處加上reasoning_effort)
+
+```
+
+  response = await client.chat.completions.create(
+    model=current_model,
+    messages=messages,
+    response_format={"type": "json_object"},
+    reasoning_effort="none"  # 👈 設置為 "none" 徹底關閉背景推導，兼顧極速回覆與最低成本
+)
+ ```
+
 ## ⚠️ 系統限制與來源版權
 
 ### 當前限制

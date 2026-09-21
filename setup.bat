@@ -47,46 +47,77 @@ if not exist "pet_backend\config.json" (
 
 echo.
 echo [2/5] 檢查 FFmpeg 環境...
-if not exist "pet_backend\\bin\\ffmpeg.exe" (
-    echo 找不到 FFmpeg，正在自動下載並配置...
-    if not exist "pet_backend\\bin" mkdir "pet_backend\\bin"
-    echo 下載 FFmpeg... (這可能需要幾分鐘的時間)
-    curl -L -o "pet_backend\\bin\\ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
-    
-    echo 正在解壓縮...
-    tar -xf "pet_backend\\bin\\ffmpeg.zip" -C "pet_backend\\bin" --strip-components=2 "ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe" "ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe"
-    
-    echo 清理暫存檔...
-    del "pet_backend\\bin\\ffmpeg.zip"
-    echo FFmpeg 配置完成！
-) else (
-    echo FFmpeg 已配置，略過下載。
+where ffmpeg >nul 2>nul
+if %errorlevel% equ 0 (
+    echo 已偵測到可用 FFmpeg，略過安裝。
+    goto :ffmpeg_done
+)
+if exist "pet_backend\bin\ffmpeg.exe" (
+    echo 偵測到專案目錄已有 FFmpeg，略過安裝。
+    set "PATH=%CD%\pet_backend\bin;%PATH%"
+    goto :ffmpeg_done
 )
 
+echo 正在下載 FFmpeg 工具包 (約 107MB)...
+if not exist "pet_backend\bin" mkdir "pet_backend\bin"
 
-echo.
+powershell -Command ^
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
+    "$rawUrl = 'https://github.com/Braised-BBQ/Murasame-aipet/releases/download/v1.0.0/ffmpeg.zip'; " ^
+    "$fastUrl = 'https://ghfast.top/' + $rawUrl; " ^
+    "$out = 'pet_backend\bin\ffmpeg.zip'; " ^
+    "$headers = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }; " ^
+    "try { " ^
+    "    Write-Host '嘗試經由高速節點下載...'; " ^
+    "    Invoke-WebRequest -Uri $fastUrl -OutFile $out -Headers $headers -TimeoutSec 15; " ^
+    "} catch { " ^
+    "    Write-Host '高速節點無回應或逾時，切換為 GitHub 官方連線...'; " ^
+    "    Invoke-WebRequest -Uri $rawUrl -OutFile $out -Headers $headers; " ^
+    "} " ^
+    "if (Test-Path $out) { " ^
+    "    Write-Host '下載成功，正在解壓縮...'; " ^
+    "    Expand-Archive -Path $out -DestinationPath 'pet_backend\bin' -Force; " ^
+    "    Remove-Item $out -Force; " ^
+    "}"
+
+:: 若 zip 解開後帶有一層資料夾，自動搬到 bin 根目錄
+if not exist "pet_backend\bin\ffmpeg.exe" (
+    powershell -Command "Get-ChildItem -Path 'pet_backend\bin' -Recurse -Filter 'ffmpeg.exe' | Move-Item -Destination 'pet_backend\bin\' -Force -ErrorAction SilentlyContinue"
+    powershell -Command "Get-ChildItem -Path 'pet_backend\bin' -Recurse -Filter 'ffprobe.exe' | Move-Item -Destination 'pet_backend\bin\' -Force -ErrorAction SilentlyContinue"
+)
+
+if exist "pet_backend\bin\ffmpeg.exe" (
+    set "PATH=%CD%\pet_backend\bin;%PATH%"
+    echo FFmpeg 配置成功！
+) else (
+    echo [錯誤] 下載或解壓失敗，請檢查網路。
+    pause
+    exit /b 1
+)
+
+:ffmpeg_done
 echo [3/5] 檢查 Python 虛擬環境...
-if not exist "venv\\Scripts\\activate.bat" (
+if not exist "venv\Scripts\activate.bat" (
     echo 正在尋找可用的 Python 指令並建立虛擬環境...
     
     :: 嘗試 1：使用 py (防禦 msys64 污染的最佳解)
     py -m venv venv >nul 2>&1
     
     :: 嘗試 2：如果 py 失敗，改用標準 python
-    if not exist "venv\\Scripts\\activate.bat" (
+    if not exist "venv\Scripts\activate.bat" (
         python -m venv venv >nul 2>&1
     )
     
     :: 嘗試 3：如果 python 也失敗，嘗試 python3 (某些環境的預設)
-    if not exist "venv\\Scripts\\activate.bat" (
+    if not exist "venv\Scripts\activate.bat" (
         python3 -m venv venv >nul 2>&1
     )
     
     :: 最終檢查
-    if not exist "venv\\Scripts\\activate.bat" (
+    if not exist "venv\Scripts\activate.bat" (
         echo [錯誤] 建立失敗！請確認這台電腦是否已安裝 Python，並且在安裝時有勾選 "Add Python to PATH"。
         pause
-        exit /b
+        exit /b 1
     ) else (
         echo 虛擬環境建立完成。
     )
@@ -95,14 +126,14 @@ if not exist "venv\\Scripts\\activate.bat" (
 )
 
 :: 啟動虛擬環境
-call "venv\\Scripts\\activate.bat"
+call "venv\Scripts\activate.bat"
 
 echo.
 echo [4/5] 安裝 Python 依賴套件...
 :: 👇 [關鍵修正 2] 絕對路徑呼叫 venv 內的 python.exe，無視全域變數干擾
-"venv\\Scripts\\python.exe" -m pip install --upgrade pip
+"venv\Scripts\python.exe" -m pip install --upgrade pip
 if exist requirements.txt (
-    "venv\\Scripts\\python.exe" -m pip install -r requirements.txt
+    "venv\Scripts\python.exe" -m pip install -r requirements.txt
 ) else (
     echo [警告] 找不到 requirements.txt
 )
