@@ -24,6 +24,8 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect,UploadFile, File
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+import signal
+import threading
 from contextlib import asynccontextmanager
 from core.vision import analyze_screen_async
 from core.brain import ask_brain, ask_brain_proactive, memory
@@ -149,6 +151,7 @@ async def proactive_trigger_callback(secret_prompt: str):
             logger.info(f"📤 [主動推播完成]: {payload['reply_zh']}")
             sleep_time = get_audio_duration(local_mp3_path) + 0.5
             await asyncio.sleep(sleep_time)
+
         return full_spoken_text # 👈 將真正說出口的話回傳給時間引擎
         
     return ""
@@ -347,19 +350,28 @@ async def get_current_location_api():
         logger.error(f"前端請求定位失敗: {e}")
         return {"status": "error", "location": "未知"}
 
-# (原本的 /shutdown 可以保留，作為純粹的關閉程式功能)
 @app.get("/shutdown")
 def shutdown_server():
-    logger.info("🛑 收到前端設定更改，正在關閉背景服務...")
+    logger.info("🛑 收到前端關閉請求，正在準備關閉背景服務...")
     
     try:
         autodl_conn.stop()
-        logger.info("🛑 AutoDL 連線已強制中斷")
     except Exception as e:
         logger.error(f"關閉 AutoDL 時發生錯誤: {e}")
         
-    logger.info("🛑 執行強制退出以觸發 launch.js 重啟機制...")
-    os._exit(0)
+    logger.info("🛑 將在 1 秒後關閉伺服器...")
+    
+    def kill_server():
+        time.sleep(1)
+        # 傳送 Ctrl+C 訊號讓 Uvicorn 優雅關閉，而不是直接 os._exit() 暴斃
+        if os.name == 'nt':
+             os.kill(os.getpid(), signal.CTRL_C_EVENT)
+        else:
+             os.kill(os.getpid(), signal.SIGTERM)
+             
+    threading.Thread(target=kill_server).start()
+
+    return {"status": "shutting_down", "message": "伺服器即將關閉"}
 
 # -------------------------------------------------------------------
 # 5. TTS 生成功能

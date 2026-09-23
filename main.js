@@ -1,13 +1,11 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, powerMonitor } = require('electron');
 const path = require('path');
-const fs = require('fs'); // 👈 [新增] 用於讀寫 config.json
-
+const fs = require('fs');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 let win;
-let settingsWin; // 👈 [新增] 設定視窗的變數
-let tray = null; // 👈 [新增] 托盤的變數
-
+let settingsWin;
+let tray = null;
 
 const configPath = path.join(__dirname, 'pet_backend/config.json');
 
@@ -47,6 +45,12 @@ function createWindow() {
   win.loadFile('index.html');
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // 👇 [請在這裡新增這一段] 監聽主視窗被關閉的事件
+  win.on('closed', () => {
+    console.log('主視窗已被關閉 ，準備結束整個程式...');
+    app.quit(); // 這會觸發底下的 before-quit，進而執行 shutdownBackend 來關閉後端
+  });
+  // 👆 新增結束
   try {
     const configData = fs.readFileSync(configPath, 'utf-8');
     const config = JSON.parse(configData);
@@ -68,7 +72,7 @@ function createWindow() {
   }, 30);
 }
 
-// 👇 [新增] 建立設定視窗的函式
+// 建立設定視窗的函式
 function createSettingsWindow() {
   settingsWin = new BrowserWindow({
     width: 600,
@@ -91,10 +95,24 @@ function createSettingsWindow() {
   });
 }
 
+// 傳送關閉訊號給後端 (改用原生 fetch)
+async function shutdownBackend() {
+    console.log("正在發送關閉訊號給後端伺服器...");
+    try {
+        const response = await fetch('http://127.0.0.1:8000/shutdown', { 
+            method: 'GET',
+            signal: AbortSignal.timeout(2000) 
+        });
+        console.log(`後端已收到關閉請求，狀態碼: ${response.status}`);
+    } catch (error) {
+        console.log(`無法連接到後端或已關閉: ${error.message}`);
+    }
+}
+
 function createTray() {
   tray = new Tray(path.join(__dirname, 'assets/icon.ico'));
 
-  // 💡 讀取目前的 config 內容來動態顯示 Base URL
+  // 讀取目前的 config 內容來動態顯示 Base URL
   let currentBaseUrl = "未設定";
   try {
     const configData = fs.readFileSync(configPath, 'utf-8');
@@ -129,24 +147,37 @@ function createTray() {
 // 啟動時一併載入
 app.whenReady().then(() => {
   createWindow();
-  createSettingsWindow(); // 👈 [新增]
-  createTray();           // 👈 [新增]
-  // 🌟 監聽電腦從睡眠/休眠中喚醒
+  createSettingsWindow(); 
+  createTray();           
+  // 監聽電腦從睡眠/休眠中喚醒
   powerMonitor.on('resume', () => {
     console.log('⚡ 系統已從睡眠中喚醒，通知渲染進程檢查與重連...');
     if (win && !win.isDestroyed()) {
       win.webContents.send('system-resumed');
     }
   });
-  // 👇 [新增] 檢查啟動參數，如果有 --show-settings 就自動顯示設定視窗
+  // 檢查啟動參數，如果有 --show-settings 就自動顯示設定視窗
   if (process.argv.includes('--show-settings')) {
     settingsWin.show();
   }
 });
 
-// 修正：當真正退出時，解除 settingsWin 的攔截
-app.on('before-quit', () => {
+// 修改原本的 before-quit 監聽器
+let isBackendShuttingDown = false;
+
+app.on('before-quit', async (e) => {
   if (settingsWin) settingsWin.destroy();
+
+  // 如果還沒發送過關閉訊號，先攔截退出，發送訊號後再真正退出
+  if (!isBackendShuttingDown) {
+    e.preventDefault(); // 阻止原本的立即退出
+    isBackendShuttingDown = true;
+
+    await shutdownBackend();
+    
+    // 訊號發送完畢後，再次呼叫 quit 完成退出
+    app.quit(); 
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -156,7 +187,7 @@ app.on('window-all-closed', () => {
 });
 
 // ==========================================
-// --- [新增] IPC：讀寫 config.json ---
+// --- IPC：讀寫 config.json ---
 // ==========================================
 
 // 讓渲染進程索取 config 資料
@@ -180,8 +211,9 @@ ipcMain.handle('save-config', async (event, newConfig) => {
     return { success: false, error: error.message };
   }
 });
+
 // ==========================================
-// --- [新增] IPC：熱修改套用 UI 設定 ---
+// --- IPC：熱修改套用 UI 設定 ---
 // ==========================================
 ipcMain.on('apply-ui-settings', () => {
   try {
@@ -195,7 +227,7 @@ ipcMain.on('apply-ui-settings', () => {
       const newWidth = Math.round(baseWidth * scale);
       const newHeight = Math.round(baseHeight * scale);
       
-      // ✅ 修正：只有當視窗大小真的需要改變時，才執行 setContentSize
+      // 只有當視窗大小真的需要改變時，才執行 setContentSize
       const currentSize = win.getContentSize();
       if (currentSize[0] !== newWidth || currentSize[1] !== newHeight) {
         win.setContentSize(newWidth, newHeight);
@@ -207,15 +239,17 @@ ipcMain.on('apply-ui-settings', () => {
     console.error('套用 UI 設定失敗:', error);
   }
 });
+
 // ==========================================
-// --- [新增] IPC：完全退出桌寵 ---
+// --- IPC：完全退出桌寵 ---
 // ==========================================
 ipcMain.on('quit-app', () => {
   app.isQuiting = true;
-  app.quit(); // 關閉前端，這會觸發剛剛 launch.js 裡的連動關閉機制
+  app.quit(); // 關閉前端，這會觸發 before-quit 裡的連動關閉機制
 });
+
 // ==========================================
-// --- 強制鎖定長寬的右鍵拖曳邏輯 (保留你原本的程式碼) ---
+// --- 強制鎖定長寬的右鍵拖曳邏輯 ---
 // ==========================================
 let dragInterval = null;
 let startMouse = { x: 0, y: 0 };
