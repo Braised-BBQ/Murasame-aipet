@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu } = require('electron'); // 👈 [新增] Tray, Menu
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs'); // 👈 [新增] 用於讀寫 config.json
+
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 let win;
@@ -130,6 +131,13 @@ app.whenReady().then(() => {
   createWindow();
   createSettingsWindow(); // 👈 [新增]
   createTray();           // 👈 [新增]
+  // 🌟 監聽電腦從睡眠/休眠中喚醒
+  powerMonitor.on('resume', () => {
+    console.log('⚡ 系統已從睡眠中喚醒，通知渲染進程檢查與重連...');
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('system-resumed');
+    }
+  });
   // 👇 [新增] 檢查啟動參數，如果有 --show-settings 就自動顯示設定視窗
   if (process.argv.includes('--show-settings')) {
     settingsWin.show();

@@ -155,7 +155,22 @@ function connectWebSocket() {
     ws.close(); 
   };
 }
+// 🌟 監聽電腦喚醒事件：自動修復連線與清除舊狀態
+ipcRenderer.on('system-resumed', () => {
+  console.log('🔄 收到電腦喚醒通知，正在重新連接叢雨大腦...');
+  
+  // 1. 如果思考中卡住，清除思考狀態與畫面鎖
+  if (dialogueText.innerText.includes("思考中") || dialogueText.innerText.includes("聆聽")) {
+    dialogueText.style.display = 'none';
+    dialogueText.innerText = '';
+  }
 
+  // 2. 檢查 WebSocket 狀態，若已斷開則立即主動重新建立連線
+  if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+    isReconnecting = false;
+    connectWebSocket();
+  }
+});
 connectWebSocket();
 
 function sendToBrain(type, content) {
@@ -344,7 +359,7 @@ init();
 // ==========================================
 // --- 7.5 語音對話 (STT) 與長按錄音邏輯 ---
 // ==========================================
-const micIcon = document.getElementById('mic-icon');
+
 let mediaRecorder;
 let audioChunks = [];
 let isVoiceRecording = false; 
@@ -401,7 +416,7 @@ async function startRecording() {
 
         mediaRecorder.start();
         isVoiceRecording = true;
-        if (micIcon) micIcon.style.display = 'block'; // 顯示麥克風與呼吸燈
+        showDialogue("【叢雨】\n聆聽中...");
         console.log("🎤 開始錄音！");
     } catch (err) {
         console.error("無法取得麥克風權限:", err);
@@ -413,7 +428,7 @@ function stopRecordingAndSend() {
         mediaRecorder.stop();
     }
     isVoiceRecording = false;
-    if (micIcon) micIcon.style.display = 'none'; // 隱藏麥克風
+    
     console.log("🛑 錄音結束，正在發送給大腦...");
 }
 
