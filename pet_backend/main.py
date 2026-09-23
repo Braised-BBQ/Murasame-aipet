@@ -149,7 +149,7 @@ async def proactive_trigger_callback(secret_prompt: str):
             logger.info(f"📤 [主動推播完成]: {payload['reply_zh']}")
             sleep_time = get_audio_duration(local_mp3_path) + 0.5
             await asyncio.sleep(sleep_time)
-            return full_spoken_text # 👈 將真正說出口的話回傳給時間引擎
+        return full_spoken_text # 👈 將真正說出口的話回傳給時間引擎
         
     return ""
 async def screen_monitor_loop():
