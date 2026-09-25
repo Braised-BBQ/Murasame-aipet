@@ -73,6 +73,7 @@ SYSTEM_PROMPT = """
       {"action_code": 4, "mcp_tool_name": "這裡填寫你想呼叫的工具名稱", "mcp_tool_args": {"參數1": "值1"}}。此時可省略 messages。
       注意：請確保 mcp_tool_args 符合該工具的 JSON Schema。
     -當使用者要求用...做甚麼事情時，先嘗試調用 `open_app` 工具（參數 `{"app_name": "spotify"}`）來啟動本機程式。看到啟動成功後，再重新調用一次對應的應用指令。
+- "used_memory_ids": 系統有時會提供幾段過去的【記憶片段】(附帶 ID)。請判斷這些記憶是否與當下對話相關。如果相關且你決定在回覆中參考它，請務必將該 ID 放入此陣列中（例如：["mem_a1b2c3d4"]）。如果毫無關聯，請忽略它們，並回傳空陣列 []。
 - "messages": 這是一個陣列 (Array)。請根據情緒轉折，將你的回覆拆分成 1 到 3 句話。每一句話作為一個獨立的 JSON 物件，必須包含以下欄位：
   - "reply_zh": 繁體中文回覆內容 ，若有英文的型號和專有名詞可用英文(若 action_code 不為 1 則留空)。
   - "reply_jp": 準確的日文翻譯，須符合前面人設語氣和說話方式 (供 TTS 使用，若 action_code 不為 1 則留空)。
@@ -82,6 +83,7 @@ SYSTEM_PROMPT = """
 範例輸出格式：
 {
   "action_code": 1,
+  "used_memory_ids": ["mem_xxxxxx"],
   "messages": [
     {"reply_zh": "主人真是的～", "reply_jp": "ご主人様ったら〜", "emotion": 6, "playMotion": false, "motion": ""},
     {"reply_zh": "不過主人的手好舒服...", "reply_jp": "でも、ご主人の手、すごく気持ちいい...", "emotion": 6, "playMotion": false, "motion": ""}
@@ -174,7 +176,8 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
                     {"role": "system", "content": "你是一個精準的記憶檢索分析器，嚴格輸出 JSON。"},
                     {"role": "user", "content": tag_prompt}
                 ],
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                reasoning_effort="low"  # 👈 僅允許模型進行極簡的推導，限制思考長度
             )
             
             result_json = json.loads(tag_response.choices[0].message.content or "{}")
@@ -255,8 +258,6 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
     if past_memories:
         dynamic_system_prompt += f"\n\n{past_memories}"
         
-    # 👉 動態附加當前可用的 MCP 工具清單給大腦看
-    dynamic_system_prompt += f"\n【可用的外部工具 (MCP) 清單】：\n{mcp_manager.get_tools_description()}\n"
         
 
     # 僅在第一輪對話時寫入短期記憶
@@ -281,11 +282,14 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
 
     try:
         response = await client.chat.completions.create(
-            model=current_model, # 使用動態獲取的模型名稱
+            model=current_model,
             messages=messages,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            # 設置為 "none" 或 "low" 關閉/降低推導深度
+            reasoning_effort="low"
         )
-        
+        if hasattr(response, "usage") and response.usage:
+            print(f"📊 [Token 統計] Input: {response.usage.prompt_tokens} | Output: {response.usage.completion_tokens}")
         result_text = response.choices[0].message.content
         if not result_text:
             raise ValueError("Empty response from OpenAI")
@@ -318,6 +322,18 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
 
         # 此時 result_json 已被靜態分析確認為 dict[str, Any]，get() 絕對不會再報錯
         if result_json.get("action_code") == 1:
+            # 🔥 新增：檢查大腦是否有實際使用記憶，有的話才進行鞏固
+            used_ids = result_json.get("used_memory_ids", [])
+            if isinstance(used_ids, list):
+                # 💡 加上 cast 告訴 Pylance 這是個陣列
+                for mem_id_raw in cast(list[Any], used_ids):
+                    # 檢查並明確賦予字串型別
+                    if isinstance(mem_id_raw, str):
+                        mem_id: str = mem_id_raw
+                        if mem_id.startswith("mem_"):
+                            memory.boost_memory(mem_id)
+                            print(f"🎯 [精準鞏固] 大腦確認使用了記憶，正在鞏固：{mem_id[-6:]}")
+
             full_reply = ""
             raw_messages = result_json.get("messages", [])
             
@@ -341,7 +357,7 @@ async def ask_brain(user_input_dict: dict[str, Any], time_engine: TimeEngine, sc
                 full_reply = raw_messages
 
             memory.add_message("model", full_reply)
-            asyncio.create_task(memory.extract_and_save_memory(prompt_text, time_engine))
+            asyncio.create_task(memory.extract_and_save_memory(prompt_text, full_reply, time_engine))
 
         return result_json
     except Exception as e:
@@ -376,7 +392,8 @@ async def ask_brain_proactive(secret_prompt: str) -> dict[str, Any]:
         response = await client.chat.completions.create(
             model=current_model,
             messages=messages,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            reasoning_effort="none"  # 👈 加上這行，避免背景主動搭話時暗自推導吃 Token
         )
         
         result_text = response.choices[0].message.content

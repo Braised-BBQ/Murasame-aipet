@@ -50,7 +50,72 @@ class MemoryManager:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.cursor.execute("INSERT INTO logs (role, content, timestamp) VALUES (?, ?, ?)", (role, content, timestamp))
         self.conn.commit()
-
+    def boost_memory(self, doc_id: str) -> None:
+        """
+        當大腦實際採用了某筆記憶後，手動呼叫此函數提升回憶次數並追溯因果鏈。
+        """
+        try:
+            result = self.collection.get(ids=[doc_id])
+            # 🔥 修正 3：加入更嚴謹的 None 檢查，解決 Pylance "List[Metadata] | None" 無法使用 len 的問題
+            if not result or result.get("metadatas") is None:
+                return
+            
+            metadatas_list = cast(list[Any], result.get("metadatas"))
+            if len(metadatas_list) == 0:
+                return
+                
+            meta_raw = metadatas_list[0]
+            meta = cast(dict[str, Any], meta_raw) if isinstance(meta_raw, dict) else {}
+            
+            current_recall_count = int(meta.get("recall_count", 0)) + 1
+            updated_meta = {k: v for k, v in meta.items()}
+            updated_meta["recall_count"] = current_recall_count
+            
+            self.collection.update(ids=[doc_id], metadatas=[updated_meta])
+            print(f"🌟 [記憶鞏固] ID: {doc_id[-6:]} 記憶韌性提升！目前喚醒次數: {current_recall_count}")
+            
+            current_parent_id = meta.get("parent_id")
+            visited_ids = {doc_id}
+            chain_depth = 0
+            max_depth = 3
+            
+            while current_parent_id and str(current_parent_id) not in ("none", "null") and chain_depth < max_depth:
+                parent_id_str = str(current_parent_id)
+                if parent_id_str in visited_ids:
+                    print(f"⚠️ [因果鏈防護] 偵測到邏輯死循環，已強制切斷連結：{parent_id_str}")
+                    break
+                    
+                visited_ids.add(parent_id_str)
+                
+                try:
+                    parent_result = self.collection.get(ids=[parent_id_str])
+                    
+                    # 🔥 同樣補上對 None 的嚴格檢查
+                    if not parent_result or parent_result.get("metadatas") is None:
+                        break
+                        
+                    p_metas = cast(list[Any], parent_result.get("metadatas"))
+                    if len(p_metas) > 0:
+                        p_meta_raw = p_metas[0]
+                        parent_meta = cast(dict[str, Any], p_meta_raw) if isinstance(p_meta_raw, dict) else {}
+                        
+                        parent_recall = int(parent_meta.get("recall_count", 0)) + 1
+                        updated_parent_meta = {k: v for k, v in parent_meta.items()}
+                        updated_parent_meta["recall_count"] = parent_recall
+                        self.collection.update(ids=[parent_id_str], metadatas=[updated_parent_meta])
+                        
+                        print(f"🔗 [因果鏈連動] 成功鞏固關聯記憶: {parent_id_str[-6:]}")
+                        
+                        current_parent_id = parent_meta.get("parent_id")
+                        chain_depth += 1
+                    else:
+                        break
+                except Exception as e:
+                    print(f"⚠️ [因果鏈溯源失敗]: {e}")
+                    break
+                    
+        except Exception as e:
+            print(f"⚠️ [Boost Memory Error]: {e}")
     def get_messages(self) -> list[dict[str, Any]]:
         return self.history
 
@@ -129,11 +194,7 @@ class MemoryManager:
         if not ids_list or len(ids_list[0]) == 0 or not distances_list or not metadatas_list or not documents_list:
             return ""
 
-        best_memory_str: str = ""
-        highest_w: float = 0.0
         now = datetime.now()
-        
-        # 🌟 直接將 LLM 傳來的「天數」換算成具體日期
         target_date = None
         window_days = time_window
         
@@ -141,15 +202,15 @@ class MemoryManager:
             target_date = now - timedelta(days=int(target_days_ago))
             print(f"⏱️ [LLM 時間對齊] 換算目標日: {target_date.strftime('%Y-%m-%d')} | 模糊半徑: ±{window_days}天")
         
-        best_doc_id: str | None = None
-        best_meta: dict[str, Any] | None = None
+        # 🔥 修正 1：明確宣告陣列的型別為 list[dict[str, Any]]，解決 Pylance 所有未知型別報錯
+        candidates: list[dict[str, Any]] = []
 
         # 2. 遍歷候選記憶
         for i in range(len(ids_list[0])):
             doc_id: str = str(ids_list[0][i])
             meta_raw = metadatas_list[0][i]
             meta = cast(dict[str, Any], meta_raw) if isinstance(meta_raw, dict) else {}
-            distance: float  = distances_list[0][i]
+            distance: float = float(str(distances_list[0][i]))
             document: str = str(documents_list[0][i])
             
             sim: float = 1.0 / (1.0 + distance)
@@ -162,9 +223,9 @@ class MemoryManager:
             s_base = int(meta.get("s_base", 50))
             recall_count = int(meta.get("recall_count", 0))
             
-            if s_base >= 95:# 永久核心記憶，完全不衰退
+            if s_base >= 95:
                 v_t: float = 1.0
-            else:# 依據 S_base 與 recall_count 計算衰退係數
+            else:
                 base_decay = 0.005 if s_base >= 80 else 0.05
                 effective_decay = max(0.001, base_decay * (0.8 ** recall_count))
                 v_t: float = math.exp(-effective_decay * delta_days)
@@ -178,136 +239,83 @@ class MemoryManager:
                 elif hours_since_recall < 24.0:
                     p_c = 0.5  
             
-            # 🌟 3. 計算高斯時間加權 (Gaussian Temporal Bonus)
             t_bonus = 0.0
             if target_date and window_days > 0:
-                # 計算記憶發生日與目標日的「天數落差」
                 diff_days = abs((created_at - target_date).days)
-                
-                # 使用常態分佈公式：落差越小，得分越接近 0.3；落差超過 window_days 則分數趨近於 0
                 t_bonus = 0.3 * math.exp(- (diff_days ** 2) / (2 * (window_days ** 2)))
 
-            # 讓高相似度依然很高，低相似度瞬間掉下去，最後「加上」時間加權分
             sharpened_sim = sim ** 2 
             w_m: float = ((0.7 * sharpened_sim + 0.3 * (n_tags / 10.0)) * v_t * p_c) + t_bonus
-            
             print(f"🧠 [評估] {doc_id[-6:]} | Sim: {sim:.2f} | V_t: {v_t:.2f} | T_bonus: {t_bonus:.3f} => W: {w_m:.3f}")
 
-            if w_m > highest_w and w_m >= 0.45:
-                highest_w = w_m
-                best_doc_id = doc_id  # 記錄勝出者 ID
-                best_meta = meta      # 記錄勝出者 Metadata
-                
-                # 3. 觸發 SQLite 全資訊層切片 (動態對話時間窗)
-                sql_id_raw = meta.get("sqlite_id")
-                if sql_id_raw is not None:
-                    sql_id: int = int(str(sql_id_raw))
-                    
-                    # (1) 先取得這筆核心記憶發生的精準時間
-                    self.cursor.execute("SELECT timestamp FROM logs WHERE id = ?", (sql_id,))
-                    target_row = self.cursor.fetchone()
-                    
-                    if target_row and target_row[0]:
-                        target_time_str = target_row[0]
-                        
-                        # (2) 動態切片：抓取上下 6 句，並且「嚴格限制在前後 15 分鐘內」的關聯對話
-                        # 這樣既能包覆完整的事件脈絡，又能完美避開「隔天早上」的無關對話
-                        query = """
-                            SELECT role, content 
-                            FROM logs 
-                            WHERE id >= ? AND id <= ?
-                              AND timestamp >= datetime(?, '-15 minutes')
-                              AND timestamp <= datetime(?, '+15 minutes')
-                            ORDER BY id ASC
-                        """
-                        self.cursor.execute(query, (sql_id - 6, sql_id + 6, target_time_str, target_time_str))
-                        slice_rows = self.cursor.fetchall()
-                    else:
-                        # 防呆機制：如果時間戳找不到，退回基礎的固定上下 2 句抓法
-                        self.cursor.execute(
-                            "SELECT role, content FROM logs WHERE id >= ? AND id <= ? ORDER BY id ASC", 
-                            (sql_id - 2, sql_id + 2)
-                        )
-                        slice_rows = self.cursor.fetchall()
-                    
-                    # (3) 組合上下文
-                    context_slice: list[str] = []
-                    for row in slice_rows:
-                        speaker = "主人" if str(row[0]) == "user" else "叢雨"
-                        context_slice.append(f"{speaker}：{str(row[1])}")
-                    
-                    fuzzy_time = self._get_fuzzy_time(created_at)
-                    best_memory_str = (
-                        f"【腦海中浮現的深刻記憶片段 ({fuzzy_time})】\n"
-                        f"事件標籤：{document}\n"
-                        f"當時的對話上下文：\n" + "\n".join(context_slice)
-                    )
-                    self.last_recalled[doc_id] = now
+            if w_m >= 0.45:
+                candidates.append({
+                    "w_m": w_m,
+                    "doc_id": doc_id,
+                    "meta": meta,
+                    "document": document,
+                    "created_at": created_at
+                })
 
-        # 🔥 新增：當迴圈結束，若有記憶成功被喚醒，更新其 recall_count 鞏固記憶
-        if best_doc_id and best_meta:
-            current_recall_count = int(best_meta.get("recall_count", 0)) + 1
-            updated_meta = {k: v for k, v in best_meta.items()}
-            updated_meta["recall_count"] = current_recall_count
+        candidates.sort(key=lambda x: float(x["w_m"]), reverse=True)
+        
+        # 🔥 修正 2：在這裡更改喚醒數量，改成抓取前 3 名
+        top_candidates = candidates[:3]
+        
+        if not top_candidates:
+            return ""
+
+        best_memory_str = ""
+        for cand in top_candidates:
+            # 加入型別轉換確保 Pylance 認得
+            c_doc_id: str = str(cand["doc_id"])
+            c_meta: dict[str, Any] = cast(dict[str, Any], cand["meta"])
+            c_created_at: datetime = cand["created_at"]
+            c_document: str = str(cand["document"])
             
-            try:
-                self.collection.update(
-                    ids=[best_doc_id],
-                    metadatas=[updated_meta]
-                )
-                print(f"🌟 [記憶鞏固] ID: {best_doc_id[-6:]} 記憶韌性提升！目前喚醒次數: {current_recall_count}")
+            sql_id_raw = c_meta.get("sqlite_id")
+            context_slice: list[str] = []
+            
+            if sql_id_raw is not None:
+                sql_id: int = int(str(sql_id_raw))
+                self.cursor.execute("SELECT timestamp FROM logs WHERE id = ?", (sql_id,))
+                target_row = self.cursor.fetchone()
                 
-                # ==========================================
-                # 🔗 核心新增：深度因果鏈追溯 (具備 DAG 環狀防護)
-                # ==========================================
-                current_parent_id = best_meta.get("parent_id")
-                visited_ids = {best_doc_id}  # 🛡️ 防護 1：記錄已經走過的節點，起點先加入
-                chain_depth = 0
-                max_depth = 3  # 🛡️ 防護 2：限制最多往上追溯 3 層，避免 Token 爆炸
+                if target_row and target_row[0]:
+                    target_time_str = target_row[0]
+                    query = """
+                        SELECT role, content FROM logs 
+                        WHERE id >= ? AND id <= ?
+                          AND timestamp >= datetime(?, '-15 minutes')
+                          AND timestamp <= datetime(?, '+15 minutes')
+                        ORDER BY id ASC
+                    """
+                    # 因應 3 條記憶，這裡微調為上下 4 句以節省 Token
+                    self.cursor.execute(query, (sql_id - 4, sql_id + 4, target_time_str, target_time_str))
+                    slice_rows = self.cursor.fetchall()
+                else:
+                    self.cursor.execute(
+                        "SELECT role, content FROM logs WHERE id >= ? AND id <= ? ORDER BY id ASC", 
+                        (sql_id - 2, sql_id + 2)
+                    )
+                    slice_rows = self.cursor.fetchall()
                 
-                while current_parent_id and current_parent_id not in ("none", "null") and chain_depth < max_depth:
-                    # 🚨 核心防護：如果這個 ID 已經在集合裡，代表發生 DAG 循環鎖死 (A->B->A)，立刻中斷！
-                    if current_parent_id in visited_ids:
-                        print(f"⚠️ [因果鏈防護] 偵測到邏輯死循環 (Cycle Detected)，已強制切斷連結：{current_parent_id}")
-                        break
-                        
-                    visited_ids.add(current_parent_id)
-                    
-                    try:
-                        parent_result = self.collection.get(ids=[str(current_parent_id)])
-                        p_docs = parent_result.get("documents")
-                        p_metas = parent_result.get("metadatas")
-                        
-                        if p_docs and len(p_docs) > 0 and p_metas and len(p_metas) > 0:
-                            parent_doc = str(p_docs[0])
-                            p_meta_raw = p_metas[0]
-                            parent_meta = cast(dict[str, Any], p_meta_raw) if isinstance(p_meta_raw, dict) else {}
-                            parent_time = str(parent_meta.get("created_at", "過去"))
-                            
-                            best_memory_str += (
-                                f"\n\n【🔗 記憶深處的因果聯想 (追溯深度 {chain_depth + 1})】\n"
-                                f"這件事似乎與之前發生的這件事有直接關聯：\n"
-                                f"時間：{parent_time}\n"
-                                f"關聯事件：{parent_doc}\n"
-                            )
-                            print(f"🔗 [因果鏈喚醒] 成功串聯過去記憶: {parent_doc}")
-                            
-                            # 🌟 順藤摸瓜：把 current_parent_id 更新為「上一代的 parent_id」，準備進入下一圈迴圈
-                            current_parent_id = parent_meta.get("parent_id")
-                            chain_depth += 1
-                        else:
-                            # 找不到該記憶節點，代表因果鏈已斷裂，結束追溯
-                            break 
-                    except Exception as e:
-                        print(f"⚠️ [因果鏈溯源失敗]: {e}")
-                        break
+                for row in slice_rows:
+                    speaker = "主人" if str(row[0]) == "user" else "叢雨"
+                    context_slice.append(f"{speaker}：{str(row[1])}")
+                
+            fuzzy_time = self._get_fuzzy_time(c_created_at)
+            
+            best_memory_str += (
+                f"【記憶片段 ID: {c_doc_id}】 ({fuzzy_time})\n"
+                f"事件標籤：{c_document}\n"
+                f"當時的對話上下文：\n" + "\n".join(context_slice) + "\n\n"
+            )
+            self.last_recalled[c_doc_id] = now
 
-            except Exception as e:
-                print(f"⚠️ [記憶鞏固失敗]: {e}")
+        return best_memory_str.strip()
 
-        return best_memory_str
-
-    async def extract_and_save_memory(self, user_text: str, time_engine: TimeEngine) -> None:
+    async def extract_and_save_memory(self, user_text: str, model_reply: str, time_engine: TimeEngine) -> None:
         raw_key = config_manager.get("openai_api_key", config_manager.get("api_key", ""))
         api_key = raw_key if raw_key else "sk-dummy-key"
         client = AsyncOpenAI(api_key=api_key, base_url=config_manager.get("base_url", None))
@@ -342,8 +350,15 @@ class MemoryManager:
         try:
             prompt = f"""
             當前系統時間：{time_engine.get_time_context()}
-            請評估主人剛才說的話：「{user_text}」
+            請評估主人與叢雨剛才發生的這段完整對話：
             
+            主人：「{user_text}」
+            叢雨：「{model_reply}」
+
+            【對話脈絡對齊規則 (極度重要)】
+            你必須根據「叢雨的實際回答」來決定這筆記憶的最終解讀。
+            如果主人說話曖昧不清，但叢雨將其解讀為特定事物（例如把老朋友解讀為月亮），你的記憶標籤與事實萃取「必須完全跟隨叢雨的認知」，絕對不可自行腦補其他毫不相干的舊記憶！
+                
             【S_base 記憶深度打分指南 (多維度綜合評估)】
             請綜合評估「資訊價值」、「情感強烈度」與「對未來關係的影響力」，給出 0-100 的 S_base：
             - [0-29] 毫無記憶價值：無意義的語氣詞、隨機亂碼 (例如：「嗯」、「好」)。
@@ -417,7 +432,8 @@ class MemoryManager:
             response = await client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "system", "content": "你是一個精準的記憶評估引擎，嚴格輸出 JSON。"}, {"role": "user", "content": prompt}],
-                #response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                reasoning_effort="low"  # 👈 僅允許模型進行極簡的推導，限制思考長度
             )
             
             result_text = response.choices[0].message.content or "{}"
